@@ -26,11 +26,11 @@ SEQUENCE = [
     {"name": "time2", "template": "templates/time2.png", "confidence": 0.85, "retry_after": 3.0, "retry_template": "templates/start.png"},
     {"name": "time2_1", "template": "templates/time2_1.png", "confidence": 0.85},
     {"name": "time2_2", "template": "templates/time2_2.png", "confidence": 0.85},
-    {"name": "time2_3", "template": "templates/time2_3.png", "confidence": 0.85},
+    # {"name": "time2_3", "template": "templates/time2_3.png", "confidence": 0.85},
     # the Double Coins Play! tap above resolves instantly into a Result/OK
     # popup (same OK button as end1) before the start2 screen shows up.
     # {"name": "result_ok", "template": "templates/end1.png", "confidence": 0.85},
-    {"name": "start2", "template": "templates/start2.png", "confidence": 0.85, "enabled": False},
+    {"name": "start2", "template": "templates/start2.png", "confidence": 0.85, "enabled": True, "retry_template": "templates/start.png"},
     # run1 can appear and disappear fast -- wait almost no time after start2
     # so the bot is already watching for it the instant it shows up.
     {"name": "run1",   "template": "templates/run1.png",   "confidence": 0.85, "post_delay": (0.0, 0.15)},
