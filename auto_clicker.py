@@ -77,6 +77,22 @@ def restart_app():
     print(f"  waiting {config.APP_RELAUNCH_WAIT}s for the game to load...")
     time.sleep(config.APP_RELAUNCH_WAIT)
 
+    # The game can come back to a "lvup" popup instead of the start screen
+    # (e.g. an offline-progress level-up). Dismiss it a couple of times
+    # before falling back to the normal loop, which waits for "start".
+    start_step = config.SEQUENCE[0]
+    lvup = next((i for i in config.INTERRUPTS if i["name"] == "lvup"), None)
+    for attempt in range(2):
+        frame = adb_client.screencap()
+        if find_template(frame, start_step["template"], start_step["confidence"]):
+            return
+        if lvup:
+            match = find_template(frame, lvup["template"], lvup["confidence"])
+            if match:
+                print(f"  'start' not found after relaunch, dismissing 'lvup' (attempt {attempt + 1})")
+                click_match(match, lvup["name"])
+                human_delay()
+
 
 def preload_templates():
     for step in config.SEQUENCE + config.INTERRUPTS:

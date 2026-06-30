@@ -61,6 +61,7 @@ INTERRUPTS = [
     # in-game disconnect/network-error popup -- instead of tapping a button,
     # force-stop and relaunch the game app (see GAME_PACKAGE below).
     {"name": "reconnect", "template": "templates/reconnect.png", "confidence": 0.85, "action": "restart_app"},
+    {"name": "reconnect2", "template": "templates/reconnect2.png", "confidence": 0.85, "action": "restart_app"},
 ]
 
 # Android package name of the game, force-stopped and relaunched when the
