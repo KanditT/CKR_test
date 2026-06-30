@@ -12,11 +12,18 @@ Capture each template with:
     python capture_template.py <name>
 """
 
-SEQUENCE = [{'name': 'start', 'template': 'templates/start.png', 'confidence': 0.85, 'wait_before': (4.0, 5.0)},
- {'name': 'time2', 'template': 'templates/time2.png', 'confidence': 0.85},
+SEQUENCE = [{'name': 'Play!', 'template': 'templates/start.png', 'confidence': 0.85, 'wait_before': (4.0, 5.0)},
+ {'name': 'Buy Boost', 'template': 'templates/Buy Boost.png', 'confidence': 0.85},
+ {'name': 'Buying Boost', 'template': 'templates/new_step.png', 'confidence': 0.85},
+ {'name': 'time2',
+  'template': 'templates/time2.png',
+  'confidence': 0.85,
+  'retry_after': 3.0,
+  'retry_template': 'templates/start.png'},
  {'name': 'time2_1', 'template': 'templates/time2_1.png', 'confidence': 0.85},
  {'name': 'time2_2', 'template': 'templates/time2_2.png', 'confidence': 0.85},
  {'name': 'time2_3', 'template': 'templates/time2_3.png', 'confidence': 0.85},
+ {'name': 'start2', 'template': 'templates/start2.png', 'confidence': 0.85, 'enabled': False},
  {'name': 'run1', 'template': 'templates/run1.png', 'confidence': 0.85, 'post_delay': (0.0, 0.15)},
  {'name': 'exit',
   'template': 'templates/exit.png',
@@ -25,7 +32,7 @@ SEQUENCE = [{'name': 'start', 'template': 'templates/start.png', 'confidence': 0
   'wait_before': (14.5, 16.0)},
  {'name': 'exit1', 'template': 'templates/exit2.png', 'confidence': 0.85, 'enabled': False},
  {'name': 'exit2', 'template': 'templates/exit3.png', 'confidence': 0.85, 'enabled': False},
- {'name': 'run2', 'template': 'templates/run2.png', 'confidence': 0.85},
+ {'name': 'run2', 'template': 'templates/run2.png', 'confidence': 0.85, 'enabled': False},
  {'name': 'end1', 'template': 'templates/end1.png', 'confidence': 0.85},
  {'name': 'end2', 'template': 'templates/end2.png', 'confidence': 0.85, 'timeout': 5.0},
  {'name': 'end3', 'template': 'templates/end3.png', 'confidence': 0.85, 'timeout': 5.0}]

@@ -17,6 +17,12 @@ import config
 CONFIG_PATH = "config.py"
 PREVIEW_MAX_WIDTH = 500
 PREVIEW_MAX_HEIGHT = 150
+APP_BG = "#f3f5f7"
+SURFACE_BG = "#ffffff"
+TEXT_COLOR = "#17202a"
+MUTED_COLOR = "#667085"
+ACCENT_COLOR = "#0f766e"
+DANGER_COLOR = "#b42318"
 
 
 def step_defaults(step):
@@ -29,6 +35,9 @@ def step_defaults(step):
         "wait_before": None,
         "timeout": None,
         "verify_click": False,
+        "retry_after": None,
+        "retry_template": "",
+        "retry_confidence": None,
     }
     data.update(step)
     return data
@@ -96,6 +105,29 @@ def compact_step(step):
         compact["timeout"] = float(step["timeout"])
     if step.get("verify_click"):
         compact["verify_click"] = True
+    if step.get("retry_after") is not None:
+        compact["retry_after"] = float(step["retry_after"])
+    if step.get("retry_template"):
+        compact["retry_template"] = step["retry_template"]
+    if step.get("retry_confidence") is not None:
+        compact["retry_confidence"] = float(step["retry_confidence"])
+
+    known_keys = {
+        "enabled",
+        "name",
+        "template",
+        "confidence",
+        "post_delay",
+        "wait_before",
+        "timeout",
+        "verify_click",
+        "retry_after",
+        "retry_template",
+        "retry_confidence",
+    }
+    for key, value in step.items():
+        if key not in known_keys and value is not None:
+            compact[key] = value
     return compact
 
 
@@ -184,9 +216,11 @@ class BotApp(tk.Tk):
     def __init__(self):
         super().__init__()
 
-        self.title("Cookie Run Classic Auto Clicker")
-        self.geometry("1180x760")
-        self.minsize(980, 650)
+        self.title("Cookie Run Classic Runner")
+        self.geometry("1240x780")
+        self.minsize(1080, 680)
+        self.configure(background=APP_BG)
+        self.setup_styles()
 
         self.sequence = [step_defaults(step) for step in copy.deepcopy(config.SEQUENCE)]
         self.interrupts = [step_defaults(step) for step in copy.deepcopy(config.INTERRUPTS)]
@@ -210,6 +244,7 @@ class BotApp(tk.Tk):
         self.current_step_var = tk.StringVar(value="-")
         self.preview_text_var = tk.StringVar(value="No template selected")
         self.preview_image = None
+        self.capture_target_map = {}
 
         self.edit_vars = {
             "name": tk.StringVar(),
@@ -218,6 +253,9 @@ class BotApp(tk.Tk):
             "post_delay": tk.StringVar(),
             "wait_before": tk.StringVar(),
             "timeout": tk.StringVar(),
+            "retry_after": tk.StringVar(),
+            "retry_template": tk.StringVar(),
+            "retry_confidence": tk.StringVar(),
             "enabled": tk.BooleanVar(value=True),
             "verify_click": tk.BooleanVar(value=False),
         }
@@ -226,60 +264,172 @@ class BotApp(tk.Tk):
         self.refresh_tree()
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
+    def setup_styles(self):
+        style = ttk.Style(self)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+
+        default_font = ("Segoe UI", 10)
+        title_font = ("Segoe UI", 16, "bold")
+        label_font = ("Segoe UI", 9)
+        button_font = ("Segoe UI", 10)
+        style.configure(".", font=default_font, background=APP_BG, foreground=TEXT_COLOR)
+        style.configure("TFrame", background=APP_BG)
+        style.configure("Surface.TFrame", background=SURFACE_BG)
+        style.configure("TLabel", background=APP_BG, foreground=TEXT_COLOR)
+        style.configure("Title.TLabel", background=APP_BG, foreground=TEXT_COLOR, font=title_font)
+        style.configure("Muted.TLabel", background=APP_BG, foreground=MUTED_COLOR, font=label_font)
+        style.configure("Status.TLabel", background=APP_BG, foreground=TEXT_COLOR, font=("Segoe UI", 10, "bold"))
+        style.configure("TButton", font=button_font, padding=(14, 7))
+        style.configure("Accent.TButton", font=button_font, padding=(16, 8), foreground="#ffffff", background=ACCENT_COLOR)
+        style.map("Accent.TButton", background=[("active", "#115e59"), ("pressed", "#134e4a")])
+        style.configure("Danger.TButton", font=button_font, padding=(16, 8), foreground="#ffffff", background=DANGER_COLOR)
+        style.map("Danger.TButton", background=[("active", "#912018"), ("pressed", "#7a271a")])
+        style.configure("Quiet.TButton", font=button_font, padding=(12, 7))
+        style.configure("TNotebook", background=APP_BG, borderwidth=0)
+        style.configure("TNotebook.Tab", padding=(18, 9), font=("Segoe UI", 10))
+        style.configure("TLabelframe", background=APP_BG, bordercolor="#d0d5dd")
+        style.configure("TLabelframe.Label", background=APP_BG, foreground=TEXT_COLOR, font=("Segoe UI", 10, "bold"))
+        style.configure("Treeview", font=("Segoe UI", 9), rowheight=26, fieldbackground=SURFACE_BG, background=SURFACE_BG)
+        style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"))
+        style.configure("TEntry", padding=(4, 4))
+        style.configure("TCombobox", padding=(4, 4))
+
     def create_widgets(self):
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(2, weight=1)
+        self.rowconfigure(1, weight=1)
 
-        top = ttk.Frame(self, padding=(10, 10, 10, 6))
-        top.grid(row=0, column=0, sticky="ew")
-        top.columnconfigure(1, weight=1)
-        top.columnconfigure(3, weight=1)
+        command_bar = ttk.Frame(self, padding=(16, 14, 16, 10))
+        command_bar.grid(row=0, column=0, sticky="ew")
+        command_bar.columnconfigure(1, weight=1)
 
-        ttk.Label(top, text="ADB path").grid(row=0, column=0, sticky="w")
-        ttk.Entry(top, textvariable=self.adb_path_var).grid(row=0, column=1, sticky="ew", padx=(6, 12))
-        ttk.Label(top, text="Serial").grid(row=0, column=2, sticky="w")
-        ttk.Entry(top, textvariable=self.adb_serial_var, width=20).grid(row=0, column=3, sticky="ew", padx=(6, 12))
-        ttk.Button(top, text="Connect", command=self.connect_adb).grid(row=0, column=4, padx=(0, 6))
-        ttk.Button(top, text="Reload Config", command=self.load_config_file).grid(row=0, column=5, padx=(0, 6))
-        ttk.Button(top, text="Save Config", command=self.save_config_file).grid(row=0, column=6)
+        title_block = ttk.Frame(command_bar)
+        title_block.grid(row=0, column=0, sticky="w")
+        ttk.Label(title_block, text="Cookie Run Runner", style="Title.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(title_block, text="ADB bot control, template capture, and match debug", style="Muted.TLabel").grid(
+            row=1, column=0, sticky="w", pady=(2, 0)
+        )
 
-        settings = ttk.LabelFrame(self, text="Loop Settings", padding=(10, 8))
-        settings.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 8))
-        for col in range(14):
-            settings.columnconfigure(col, weight=0)
-        settings.columnconfigure(13, weight=1)
+        status_bar = ttk.Frame(command_bar)
+        status_bar.grid(row=0, column=1, sticky="ew", padx=(28, 20))
+        status_bar.columnconfigure(5, weight=1)
+        ttk.Label(status_bar, text="State", style="Muted.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(status_bar, textvariable=self.status_var, style="Status.TLabel", width=12).grid(
+            row=1, column=0, sticky="w", padx=(0, 18)
+        )
+        ttk.Label(status_bar, text="Current", style="Muted.TLabel").grid(row=0, column=1, sticky="w")
+        ttk.Label(status_bar, textvariable=self.current_step_var, style="Status.TLabel", width=18).grid(
+            row=1, column=1, sticky="w", padx=(0, 18)
+        )
+        self.match_summary_var = tk.StringVar(value="-")
+        ttk.Label(status_bar, text="Match", style="Muted.TLabel").grid(row=0, column=2, sticky="w")
+        ttk.Label(status_bar, textvariable=self.match_summary_var, style="Status.TLabel").grid(row=1, column=2, sticky="w")
 
-        self.add_setting(settings, "Scan", self.scan_interval_var, 0)
-        self.add_setting(settings, "Delay min", self.min_delay_var, 2)
-        self.add_setting(settings, "Delay max", self.max_delay_var, 4)
-        self.add_setting(settings, "Jitter px", self.jitter_var, 6)
-        self.add_setting(settings, "Retry", self.retry_limit_var, 8)
-        self.add_setting(settings, "Verify delay", self.verify_delay_var, 10)
-        ttk.Label(settings, text="Current").grid(row=0, column=12, sticky="e", padx=(16, 4))
-        ttk.Label(settings, textvariable=self.current_step_var, width=18).grid(row=0, column=13, sticky="w")
+        controls = ttk.Frame(command_bar)
+        controls.grid(row=0, column=2, sticky="e")
+        ttk.Button(controls, text="Connect", command=self.connect_adb, style="Quiet.TButton").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(controls, text="Start", command=self.start_loop, style="Accent.TButton").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(controls, text="Pause", command=self.toggle_pause, style="Quiet.TButton").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(controls, text="Stop", command=self.stop_loop, style="Danger.TButton").pack(side=tk.LEFT)
 
-        main = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
-        main.grid(row=2, column=0, sticky="nsew", padx=10, pady=(0, 8))
+        self.main_tabs = ttk.Notebook(self)
+        self.main_tabs.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 16))
 
-        left = ttk.Frame(main)
-        left.columnconfigure(0, weight=1)
-        left.rowconfigure(1, weight=1)
-        main.add(left, weight=3)
+        self.create_run_tab()
+        self.create_steps_tab()
+        self.create_capture_tab()
+        self.create_settings_tab()
 
-        toolbar = ttk.Frame(left)
-        toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 6))
-        ttk.Button(toolbar, text="Start Loop", command=self.start_loop).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(toolbar, text="Pause/Resume", command=self.toggle_pause).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(toolbar, text="Stop", command=self.stop_loop).pack(side=tk.LEFT, padx=(0, 16))
-        ttk.Button(toolbar, text="Add Step", command=self.add_step).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(toolbar, text="Delete", command=self.delete_step).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(toolbar, text="Up", command=lambda: self.move_step(-1)).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(toolbar, text="Down", command=lambda: self.move_step(1)).pack(side=tk.LEFT, padx=(0, 16))
-        ttk.Button(toolbar, text="Capture Template", command=self.capture_selected).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(toolbar, text="Test Selected", command=self.test_selected).pack(side=tk.LEFT)
+    def create_run_tab(self):
+        run = ttk.Frame(self.main_tabs, padding=14)
+        run.columnconfigure(0, weight=1)
+        run.rowconfigure(1, weight=1)
+        run.rowconfigure(2, weight=1)
+        self.main_tabs.add(run, text="Run")
 
-        self.tabs = ttk.Notebook(left)
-        self.tabs.grid(row=1, column=0, sticky="nsew")
+        actions = ttk.Frame(run)
+        actions.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        ttk.Button(actions, text="Test Current Screen", command=self.test_current_screen, style="Accent.TButton").pack(
+            side=tk.LEFT, padx=(0, 8)
+        )
+        ttk.Button(actions, text="Save Config", command=self.save_config_file, style="Quiet.TButton").pack(
+            side=tk.LEFT, padx=(0, 8)
+        )
+        ttk.Button(actions, text="Reload Config", command=self.load_config_file, style="Quiet.TButton").pack(side=tk.LEFT)
+
+        match_frame = ttk.LabelFrame(run, text="Current Screen Match", padding=(10, 8))
+        match_frame.grid(row=1, column=0, sticky="nsew", pady=(0, 8))
+        match_frame.columnconfigure(0, weight=1)
+        match_frame.rowconfigure(0, weight=1)
+        columns = ("result", "enabled", "group", "name", "score", "threshold", "template")
+        self.match_tree = ttk.Treeview(match_frame, columns=columns, show="headings")
+        headings = {
+            "result": "Result",
+            "enabled": "On",
+            "group": "Group",
+            "name": "Step",
+            "score": "Score",
+            "threshold": "Need",
+            "template": "Template",
+        }
+        widths = {
+            "result": 70,
+            "enabled": 50,
+            "group": 80,
+            "name": 130,
+            "score": 80,
+            "threshold": 80,
+            "template": 360,
+        }
+        for column in columns:
+            self.match_tree.heading(column, text=headings[column])
+            self.match_tree.column(column, width=widths[column], stretch=column == "template")
+        self.match_tree.grid(row=0, column=0, sticky="nsew")
+        match_scroll = ttk.Scrollbar(match_frame, orient="vertical", command=self.match_tree.yview)
+        match_scroll.grid(row=0, column=1, sticky="ns")
+        self.match_tree.configure(yscrollcommand=match_scroll.set)
+
+        log_frame = ttk.LabelFrame(run, text="Log", padding=(10, 8))
+        log_frame.grid(row=2, column=0, sticky="nsew")
+        log_frame.columnconfigure(0, weight=1)
+        log_frame.rowconfigure(0, weight=1)
+        self.log_text = tk.Text(
+            log_frame,
+            height=12,
+            wrap="word",
+            state="disabled",
+            background=SURFACE_BG,
+            foreground=TEXT_COLOR,
+            relief="flat",
+            font=("Consolas", 9),
+        )
+        self.log_text.grid(row=0, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        self.log_text.configure(yscrollcommand=scrollbar.set)
+
+    def create_steps_tab(self):
+        steps = ttk.Frame(self.main_tabs, padding=14)
+        steps.columnconfigure(0, weight=3)
+        steps.columnconfigure(1, weight=2)
+        steps.rowconfigure(1, weight=1)
+        self.main_tabs.add(steps, text="Steps")
+
+        toolbar = ttk.Frame(steps)
+        toolbar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        ttk.Button(toolbar, text="Add", command=self.add_step, style="Quiet.TButton").pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(toolbar, text="Delete", command=self.delete_step, style="Quiet.TButton").pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(toolbar, text="Up", command=lambda: self.move_step(-1), style="Quiet.TButton").pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(toolbar, text="Down", command=lambda: self.move_step(1), style="Quiet.TButton").pack(side=tk.LEFT, padx=(0, 18))
+        ttk.Button(toolbar, text="Capture", command=self.capture_selected, style="Quiet.TButton").pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(toolbar, text="Test", command=self.test_selected, style="Quiet.TButton").pack(side=tk.LEFT, padx=(0, 18))
+        ttk.Button(toolbar, text="Apply", command=self.apply_edit, style="Accent.TButton").pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(toolbar, text="Save Config", command=self.save_config_file, style="Quiet.TButton").pack(side=tk.LEFT)
+
+        self.tabs = ttk.Notebook(steps)
+        self.tabs.grid(row=1, column=0, sticky="nsew", padx=(0, 10))
         self.tabs.bind("<<NotebookTabChanged>>", self.on_tab_changed)
 
         self.sequence_tree = self.create_tree(self.tabs)
@@ -287,33 +437,27 @@ class BotApp(tk.Tk):
         self.tabs.add(self.sequence_tree.master, text="Sequence")
         self.tabs.add(self.interrupt_tree.master, text="Interrupts")
 
-        right = ttk.Frame(main, padding=(10, 0, 0, 0))
-        right.columnconfigure(0, weight=1)
-        right.rowconfigure(3, weight=1)
-        main.add(right, weight=2)
+        editor = ttk.Frame(steps)
+        editor.grid(row=1, column=1, sticky="nsew")
+        editor.columnconfigure(0, weight=1)
+        editor.rowconfigure(2, weight=1)
 
-        edit = ttk.LabelFrame(right, text="Selected Step", padding=(10, 8))
-        edit.grid(row=0, column=0, sticky="ew")
-        edit.columnconfigure(1, weight=1)
+        basic = ttk.LabelFrame(editor, text="Step", padding=(10, 8))
+        basic.grid(row=0, column=0, sticky="ew")
+        basic.columnconfigure(1, weight=1)
+        self.add_edit_row(basic, "Name", "name", 0)
+        self.add_edit_row(basic, "Template", "template", 1, browse=True)
+        self.add_edit_row(basic, "Confidence", "confidence", 2)
+        ttk.Checkbutton(basic, text="Enabled", variable=self.edit_vars["enabled"]).grid(row=3, column=0, sticky="w")
+        ttk.Checkbutton(basic, text="Verify click", variable=self.edit_vars["verify_click"]).grid(row=3, column=1, sticky="w")
 
-        self.add_edit_row(edit, "Name", "name", 0)
-        self.add_edit_row(edit, "Template", "template", 1, browse=True)
-        self.add_edit_row(edit, "Confidence", "confidence", 2)
-        self.add_edit_row(edit, "Post delay", "post_delay", 3)
-        self.add_edit_row(edit, "Wait before", "wait_before", 4)
-        self.add_edit_row(edit, "Timeout", "timeout", 5)
-
-        ttk.Checkbutton(edit, text="Enabled", variable=self.edit_vars["enabled"]).grid(row=6, column=0, sticky="w")
-        ttk.Checkbutton(edit, text="Verify click", variable=self.edit_vars["verify_click"]).grid(row=6, column=1, sticky="w")
-        ttk.Button(edit, text="Apply", command=self.apply_edit).grid(row=7, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-
-        preview = ttk.LabelFrame(right, text="Template Preview", padding=(10, 8))
+        preview = ttk.LabelFrame(editor, text="Template Preview", padding=(10, 8))
         preview.grid(row=1, column=0, sticky="ew", pady=(8, 8))
         preview.columnconfigure(0, weight=1)
         self.preview_canvas = tk.Canvas(
             preview,
             height=PREVIEW_MAX_HEIGHT,
-            background="#f5f5f5",
+            background=SURFACE_BG,
             highlightthickness=1,
             highlightbackground="#c8c8c8",
         )
@@ -321,21 +465,87 @@ class BotApp(tk.Tk):
         ttk.Label(preview, textvariable=self.preview_text_var).grid(row=1, column=0, sticky="w", pady=(6, 0))
         self.preview_canvas.bind("<Configure>", lambda _event: self.update_template_preview())
 
-        status = ttk.LabelFrame(right, text="Status", padding=(10, 8))
-        status.grid(row=2, column=0, sticky="ew", pady=(0, 8))
-        status.columnconfigure(1, weight=1)
-        ttk.Label(status, text="State").grid(row=0, column=0, sticky="w")
-        ttk.Label(status, textvariable=self.status_var).grid(row=0, column=1, sticky="w", padx=(8, 0))
+        advanced = ttk.LabelFrame(editor, text="Advanced", padding=(10, 8))
+        advanced.grid(row=2, column=0, sticky="new")
+        advanced.columnconfigure(1, weight=1)
+        self.add_edit_row(advanced, "Post delay", "post_delay", 0)
+        self.add_edit_row(advanced, "Wait before", "wait_before", 1)
+        self.add_edit_row(advanced, "Timeout", "timeout", 2)
+        self.add_edit_row(advanced, "Retry after", "retry_after", 3)
+        self.add_edit_row(advanced, "Retry template", "retry_template", 4, browse=True)
+        self.add_edit_row(advanced, "Retry conf", "retry_confidence", 5)
 
-        log_frame = ttk.LabelFrame(right, text="Log", padding=(10, 8))
-        log_frame.grid(row=3, column=0, sticky="nsew")
-        log_frame.columnconfigure(0, weight=1)
-        log_frame.rowconfigure(0, weight=1)
-        self.log_text = tk.Text(log_frame, height=12, wrap="word", state="disabled")
-        self.log_text.grid(row=0, column=0, sticky="nsew")
-        scrollbar = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
-        scrollbar.grid(row=0, column=1, sticky="ns")
-        self.log_text.configure(yscrollcommand=scrollbar.set)
+    def create_capture_tab(self):
+        capture = ttk.Frame(self.main_tabs, padding=14)
+        capture.columnconfigure(0, weight=1)
+        capture.rowconfigure(1, weight=1)
+        self.main_tabs.add(capture, text="Capture")
+
+        picker = ttk.LabelFrame(capture, text="Capture Workflow", padding=(12, 10))
+        picker.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        picker.columnconfigure(1, weight=1)
+        self.capture_target_var = tk.StringVar()
+        ttk.Label(picker, text="Step").grid(row=0, column=0, sticky="w")
+        self.capture_step_combo = ttk.Combobox(picker, textvariable=self.capture_target_var, state="readonly")
+        self.capture_step_combo.grid(row=0, column=1, sticky="ew", padx=(8, 8))
+        self.capture_step_combo.bind("<<ComboboxSelected>>", lambda _event: self.select_capture_target())
+        ttk.Button(picker, text="Capture Template", command=self.capture_selected_from_picker, style="Accent.TButton").grid(
+            row=0, column=2, padx=(0, 8)
+        )
+        ttk.Button(picker, text="Test Match", command=self.test_selected_from_picker, style="Quiet.TButton").grid(
+            row=0, column=3, padx=(0, 8)
+        )
+        ttk.Button(picker, text="Save", command=self.save_config_file, style="Quiet.TButton").grid(row=0, column=4)
+
+        capture_body = ttk.Frame(capture)
+        capture_body.grid(row=1, column=0, sticky="nsew")
+        capture_body.columnconfigure(0, weight=1)
+        capture_body.rowconfigure(0, weight=1)
+        self.capture_log = tk.Text(
+            capture_body,
+            height=10,
+            wrap="word",
+            state="disabled",
+            background=SURFACE_BG,
+            foreground=TEXT_COLOR,
+            relief="flat",
+            font=("Consolas", 9),
+        )
+        self.capture_log.grid(row=0, column=0, sticky="nsew")
+        capture_scroll = ttk.Scrollbar(capture_body, orient="vertical", command=self.capture_log.yview)
+        capture_scroll.grid(row=0, column=1, sticky="ns")
+        self.capture_log.configure(yscrollcommand=capture_scroll.set)
+
+    def create_settings_tab(self):
+        settings = ttk.Frame(self.main_tabs, padding=14)
+        settings.columnconfigure(1, weight=1)
+        self.main_tabs.add(settings, text="Settings")
+
+        ttk.Label(settings, text="ADB path").grid(row=0, column=0, sticky="w", pady=3)
+        ttk.Entry(settings, textvariable=self.adb_path_var).grid(row=0, column=1, sticky="ew", pady=3, padx=(8, 0))
+        ttk.Label(settings, text="Serial").grid(row=1, column=0, sticky="w", pady=3)
+        ttk.Entry(settings, textvariable=self.adb_serial_var).grid(row=1, column=1, sticky="ew", pady=3, padx=(8, 0))
+        ttk.Button(settings, text="Connect", command=self.connect_adb, style="Accent.TButton").grid(
+            row=2, column=1, sticky="w", pady=(6, 14), padx=(8, 0)
+        )
+
+        loop = ttk.LabelFrame(settings, text="Loop Settings", padding=(10, 8))
+        loop.grid(row=3, column=0, columnspan=2, sticky="ew")
+        for col in range(4):
+            loop.columnconfigure(col, weight=1)
+        self.add_setting(loop, "Scan", self.scan_interval_var, 0)
+        self.add_setting(loop, "Delay min", self.min_delay_var, 2)
+        self.add_setting(loop, "Delay max", self.max_delay_var, 4)
+        self.add_setting(loop, "Jitter px", self.jitter_var, 6)
+        self.add_setting(loop, "Retry", self.retry_limit_var, 8)
+        self.add_setting(loop, "Verify delay", self.verify_delay_var, 10)
+
+        config_buttons = ttk.Frame(settings)
+        config_buttons.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        ttk.Button(config_buttons, text="Reload Config", command=self.load_config_file, style="Quiet.TButton").pack(
+            side=tk.LEFT, padx=(0, 6)
+        )
+        ttk.Button(config_buttons, text="Save Config", command=self.save_config_file, style="Accent.TButton").pack(side=tk.LEFT)
 
     def add_setting(self, parent, label, variable, column):
         ttk.Label(parent, text=label).grid(row=0, column=column, sticky="w")
@@ -348,7 +558,9 @@ class BotApp(tk.Tk):
             frame.columnconfigure(0, weight=1)
             frame.grid(row=row, column=1, sticky="ew", pady=2)
             ttk.Entry(frame, textvariable=self.edit_vars[key]).grid(row=0, column=0, sticky="ew")
-            ttk.Button(frame, text="...", width=3, command=self.browse_template).grid(row=0, column=1, padx=(4, 0))
+            ttk.Button(frame, text="...", width=3, command=lambda field=key: self.browse_template(field)).grid(
+                row=0, column=1, padx=(4, 0)
+            )
         else:
             ttk.Entry(parent, textvariable=self.edit_vars[key]).grid(row=row, column=1, sticky="ew", pady=2)
 
@@ -356,27 +568,27 @@ class BotApp(tk.Tk):
         frame = ttk.Frame(parent)
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(0, weight=1)
-        columns = ("enabled", "name", "confidence", "template", "post_delay", "wait_before", "timeout", "verify")
+        columns = (
+            "enabled",
+            "name",
+            "confidence",
+            "template",
+            "retry_after",
+        )
         tree = ttk.Treeview(frame, columns=columns, show="headings", selectmode="browse")
         headings = {
             "enabled": "On",
             "name": "Name",
             "confidence": "Conf",
             "template": "Template",
-            "post_delay": "Post Delay",
-            "wait_before": "Wait Before",
-            "timeout": "Timeout",
-            "verify": "Verify",
+            "retry_after": "Retry",
         }
         widths = {
             "enabled": 44,
-            "name": 120,
+            "name": 150,
             "confidence": 70,
-            "template": 220,
-            "post_delay": 90,
-            "wait_before": 95,
-            "timeout": 70,
-            "verify": 60,
+            "template": 360,
+            "retry_after": 70,
         }
         for column in columns:
             tree.heading(column, text=headings[column])
@@ -398,6 +610,7 @@ class BotApp(tk.Tk):
     def refresh_tree(self):
         self.refresh_one_tree(self.sequence_tree, "sequence", self.sequence)
         self.refresh_one_tree(self.interrupt_tree, "interrupts", self.interrupts)
+        self.refresh_capture_targets()
 
     def refresh_one_tree(self, tree, group, steps):
         selected = tree.selection()
@@ -414,14 +627,62 @@ class BotApp(tk.Tk):
                     step.get("name", ""),
                     step.get("confidence", ""),
                     step.get("template", ""),
-                    format_delay(step.get("post_delay")),
-                    format_delay(step.get("wait_before")),
-                    "" if step.get("timeout") is None else step.get("timeout"),
-                    "yes" if step.get("verify_click") else "no",
+                    "" if step.get("retry_after") is None else step.get("retry_after"),
                 ),
             )
         if previous and tree.exists(previous):
             tree.selection_set(previous)
+
+    def refresh_capture_targets(self):
+        if not hasattr(self, "capture_step_combo"):
+            return
+        values = []
+        self.capture_target_map = {}
+        for index, step in enumerate(self.sequence):
+            label = f"{index + 1:02d}. {step.get('name', '')}  [Sequence]"
+            values.append(label)
+            self.capture_target_map[label] = ("sequence", index)
+        for index, step in enumerate(self.interrupts):
+            label = f"{index + 1:02d}. {step.get('name', '')}  [Interrupt]"
+            values.append(label)
+            self.capture_target_map[label] = ("interrupts", index)
+        current = self.capture_target_var.get()
+        self.capture_step_combo.configure(values=values)
+        if current in values:
+            self.capture_target_var.set(current)
+        elif values:
+            self.capture_target_var.set(values[0])
+        else:
+            self.capture_target_var.set("")
+
+    def select_capture_target(self):
+        value = self.capture_target_var.get()
+        if not value:
+            return False
+        target = self.capture_target_map.get(value)
+        if target is None:
+            return False
+        group, index = target
+
+        if group == "sequence":
+            steps = self.sequence
+            tree = self.sequence_tree
+            self.tabs.select(self.sequence_tree.master)
+        elif group == "interrupts":
+            steps = self.interrupts
+            tree = self.interrupt_tree
+            self.tabs.select(self.interrupt_tree.master)
+        else:
+            return False
+        if not 0 <= index < len(steps):
+            return False
+
+        self.active_group = group
+        iid = f"{group}:{index}"
+        tree.selection_set(iid)
+        tree.see(iid)
+        self.load_editor(steps[index])
+        return True
 
     def on_tab_changed(self, _event=None):
         index = self.tabs.index(self.tabs.select())
@@ -458,6 +719,11 @@ class BotApp(tk.Tk):
         self.edit_vars["post_delay"].set(format_delay(step.get("post_delay")))
         self.edit_vars["wait_before"].set(format_delay(step.get("wait_before")))
         self.edit_vars["timeout"].set("" if step.get("timeout") is None else str(step.get("timeout")))
+        self.edit_vars["retry_after"].set("" if step.get("retry_after") is None else str(step.get("retry_after")))
+        self.edit_vars["retry_template"].set(step.get("retry_template", ""))
+        self.edit_vars["retry_confidence"].set(
+            "" if step.get("retry_confidence") is None else str(step.get("retry_confidence"))
+        )
         self.edit_vars["enabled"].set(bool(step.get("enabled", True)))
         self.edit_vars["verify_click"].set(bool(step.get("verify_click", False)))
         self.update_template_preview(step.get("template", ""))
@@ -545,6 +811,9 @@ class BotApp(tk.Tk):
             step["post_delay"] = parse_delay(self.edit_vars["post_delay"].get())
             step["wait_before"] = parse_delay(self.edit_vars["wait_before"].get())
             step["timeout"] = parse_optional_float(self.edit_vars["timeout"].get())
+            step["retry_after"] = parse_optional_float(self.edit_vars["retry_after"].get())
+            step["retry_template"] = self.edit_vars["retry_template"].get().strip()
+            step["retry_confidence"] = parse_optional_float(self.edit_vars["retry_confidence"].get())
             step["enabled"] = bool(self.edit_vars["enabled"].get())
             step["verify_click"] = bool(self.edit_vars["verify_click"].get())
         except ValueError as exc:
@@ -597,7 +866,7 @@ class BotApp(tk.Tk):
         self.load_editor(step)
         self.refresh_tree()
 
-    def browse_template(self):
+    def browse_template(self, field="template"):
         path = filedialog.askopenfilename(
             title="Select template",
             filetypes=(("PNG images", "*.png"), ("All files", "*.*")),
@@ -608,8 +877,9 @@ class BotApp(tk.Tk):
                 path = os.path.relpath(path, os.getcwd())
             except ValueError:
                 pass
-            self.edit_vars["template"].set(path)
-            self.update_template_preview(path)
+            self.edit_vars[field].set(path)
+            if field == "template":
+                self.update_template_preview(path)
 
     def connect_adb(self):
         self.apply_adb_config()
@@ -670,13 +940,15 @@ class BotApp(tk.Tk):
         self.refresh_tree()
         self.update_template_preview(out_path)
         self.log(f"Saved template {out_path} ({w}x{h}).")
+        self.capture_log_message(f"Saved {out_path} ({w}x{h})")
 
     def test_selected(self):
         step, _index = self.selected_step()
         if step is None:
             messagebox.showinfo("No selection", "Select a step first.")
             return
-        self.apply_edit()
+        if not self.apply_edit():
+            return
         self.apply_adb_config()
         try:
             self.ensure_connected()
@@ -694,6 +966,60 @@ class BotApp(tk.Tk):
             f"Test {step.get('name')}: {state} score={match['score']:.3f} "
             f"threshold={threshold:.3f} loc=({match['x']}, {match['y']})"
         )
+        self.capture_log_message(
+            f"{state} {step.get('name')} score={match['score']:.3f} need={threshold:.3f}"
+        )
+
+    def capture_selected_from_picker(self):
+        if self.select_capture_target():
+            self.capture_selected()
+
+    def test_selected_from_picker(self):
+        if self.select_capture_target():
+            self.test_selected()
+
+    def test_current_screen(self):
+        self.apply_adb_config()
+        try:
+            self.ensure_connected()
+            frame = adb_client.screencap()
+        except Exception as exc:
+            messagebox.showerror("Test failed", str(exc))
+            return
+
+        rows = []
+        for group, steps in (("sequence", self.sequence), ("interrupts", self.interrupts)):
+            for step in steps:
+                template_path = step.get("template", "")
+                threshold = float(step.get("confidence", 0.85))
+                match = self.matcher.best_match(frame, template_path)
+                score = match["score"] if match else 0.0
+                result = "PASS" if score >= threshold else "LOW"
+                enabled = bool(step.get("enabled", True))
+                rows.append((score, enabled, result, group, step.get("name", ""), threshold, template_path))
+
+        rows.sort(key=lambda row: (row[1], row[0]), reverse=True)
+        self.match_tree.delete(*self.match_tree.get_children())
+        for score, enabled, result, group, name, threshold, template_path in rows:
+            self.match_tree.insert(
+                "",
+                "end",
+                values=(result, "yes" if enabled else "no", group, name, f"{score:.3f}", f"{threshold:.3f}", template_path),
+            )
+
+        if rows:
+            top = rows[0]
+            self.match_summary_var.set(f"Best: {top[4]} {top[0]:.3f}/{top[5]:.3f}")
+            self.log(f"Current screen best enabled match: {top[4]} score={top[0]:.3f}")
+
+    def capture_log_message(self, message):
+        if not hasattr(self, "capture_log"):
+            return
+        timestamp = time.strftime("%H:%M:%S")
+        self.capture_log.configure(state="normal")
+        self.capture_log.insert("end", f"[{timestamp}] {message}\n")
+        self.capture_log.see("end")
+        self.capture_log.configure(state="disabled")
 
     def ensure_connected(self):
         if not adb_client.is_connected():
@@ -804,11 +1130,16 @@ class BotApp(tk.Tk):
                         self.sleep_interruptible(settings["scan_interval"])
                         continue
 
-                match = self.matcher.find(
-                    frame,
-                    step.get("template", ""),
-                    float(step.get("confidence", 0.85)),
-                )
+                threshold = float(step.get("confidence", 0.85))
+                match = self.matcher.best_match(frame, step.get("template", ""))
+                if match:
+                    self.after(
+                        0,
+                        self.match_summary_var.set,
+                        f"{step.get('name', '-')}: {match['score']:.3f}/{threshold:.3f}",
+                    )
+                    if match["score"] < threshold:
+                        match = None
                 if match:
                     self.click_match(match, step.get("name", "step"), settings)
                     if step.get("verify_click"):
@@ -824,6 +1155,23 @@ class BotApp(tk.Tk):
                     self.threadsafe_log(f"{step.get('name')} not found within {timeout}s; skipping.")
                     seq_index, step_wait_start, wait_target = self.advance_step(sequence, seq_index)
                     continue
+
+                retry_after = step.get("retry_after")
+                if retry_after and time.monotonic() - step_wait_start >= float(retry_after):
+                    retry_template = step.get("retry_template") or "templates/start.png"
+                    retry_confidence = step.get("retry_confidence")
+                    if retry_confidence is None:
+                        retry_confidence = step.get("confidence", 0.85)
+                    retry_match = self.matcher.find(frame, retry_template, float(retry_confidence))
+                    if retry_match:
+                        self.threadsafe_log(
+                            f"{step.get('name')} not found after {retry_after}s; tapping retry template."
+                        )
+                        self.click_match(retry_match, f"{step.get('name')}-retry", settings)
+                        step_wait_start = time.monotonic()
+                        wait_target = None
+                        self.human_delay(None, settings)
+                        continue
 
                 self.sleep_interruptible(settings["scan_interval"])
         except Exception as exc:
