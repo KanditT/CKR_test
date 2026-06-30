@@ -33,7 +33,7 @@ SEQUENCE = [
     {"name": "start2", "template": "templates/start2.png", "confidence": 0.85, "enabled": True, "retry_template": "templates/start.png", "retry_after": 3.0},
     # run1 can appear and disappear fast -- wait almost no time after start2
     # so the bot is already watching for it the instant it shows up.
-    {"name": "run1",   "template": "templates/run1.png",   "confidence": 0.85, "post_delay": (0.0, 0.15)},
+    {"name": "run1",   "template": "templates/run1.png",   "confidence": 0.85, "post_delay": (0.0, 0.15), "retry_after": 0.3},
     # alternate path: bail out of the race early instead of playing it.
     # wait_before delays the bot's first attempt to look for this step's
     # button, counted from when it started waiting for it (i.e. 14s after
