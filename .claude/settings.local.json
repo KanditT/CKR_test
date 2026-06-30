@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python capture_template.py start)",
+      "Bash(tasklist)",
+      "Bash(find \"/e/LDPlayer/LDPlayer14\" -iname \"*.config\" 2>/dev/null | head -20; echo \"---vms dir---\"; find \"/e/LDPlayer/LDPlayer14\" -maxdepth 2 -type d 2>/dev/null)",
+      "Read(//e/LDPlayer/LDPlayer14/**)",
+      "Bash(\"/e/LDPlayer/LDPlayer14/ldconsole.exe\")",
+      "Bash(python -c ' *)"
+    ]
+  }
+}

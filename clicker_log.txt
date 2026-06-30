@@ -1,0 +1,13 @@
+Connecting to 127.0.0.1:5555 via adb...
+Connected.
+Preloaded 7 template(s).
+Sequence: start -> start2 -> run1 -> run2 -> end1 -> end2 -> end3 -> (loops)
+Interrupts watched at every step: lvup
+Controls: [f8] pause/resume   [f9] quit
+Starting in 3 seconds...
+  tapped 'start' (score=0.87) at (949, 645)
+  -> waiting for next step: start2
+  waiting 1.48s...
+  tapped 'start2' (score=0.87) at (960, 641)
+  -> waiting for next step: run1
+  waiting 0.14s...
