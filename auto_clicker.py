@@ -156,6 +156,16 @@ def main():
             wait_target = None
             next_step = config.SEQUENCE[seq_index]["name"]
             print(f"  -> waiting for next step: {next_step}")
+        elif step.get("retry_after") and (time.time() - step_wait_start) >= step["retry_after"]:
+            retry_template = step.get("retry_template", "templates/start.png")
+            retry_match = find_template(frame, retry_template, step.get("retry_confidence", 0.85))
+            if retry_match:
+                print(f"  '{step['name']}' not found, still on start page -- pressing start again")
+                click_match(retry_match, f"{step['name']}-retry-start")
+                step_wait_start = time.time()
+                human_delay()
+            else:
+                time.sleep(config.SCAN_INTERVAL)
         else:
             time.sleep(config.SCAN_INTERVAL)
 

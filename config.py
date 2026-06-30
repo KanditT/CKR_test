@@ -17,10 +17,13 @@ SEQUENCE = [
     # lands while the game is still mid-transition and gets ignored. The
     # bot re-checks after tapping and retaps if the same button is still
     # showing, instead of assuming the tap worked and waiting forever.
-    {"name": "start",  "template": "templates/start.png",  "confidence": 0.85, "wait_before": (4, 6)},
+    {"name": "start",  "template": "templates/start.png",  "confidence": 0.85, "wait_before": (2,3)},
     # {"name": "start",  "template": "templates/start.png",  "confidence": 0.85},
 
-    {"name": "time2", "template": "templates/time2.png", "confidence": 0.85},
+    # sometimes a different popup (e.g. Leaderboard) opens instead of the
+    # Boost shop -- if time2 hasn't shown up after a few seconds, check
+    # whether the Play! button is still there and press it again.
+    {"name": "time2", "template": "templates/time2.png", "confidence": 0.85, "retry_after": 3.0, "retry_template": "templates/start.png"},
     {"name": "time2_1", "template": "templates/time2_1.png", "confidence": 0.85},
     {"name": "time2_2", "template": "templates/time2_2.png", "confidence": 0.85},
     {"name": "time2_3", "template": "templates/time2_3.png", "confidence": 0.85},
