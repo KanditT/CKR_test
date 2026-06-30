@@ -1,0 +1,9 @@
+{
+  "server_url": "ws://localhost:8000/ws/agent",
+  "license_key": "CKR-PASTE-LICENSE-HERE",
+  "device_name": "BEERS-PC",
+  "adb_path": "C:\\LDPlayer\\LDPlayer14\\adb.exe",
+  "adb_serial": "127.0.0.1:5555",
+  "python_exe": "",
+  "bot_script": "auto_clicker.py"
+}

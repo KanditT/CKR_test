@@ -5,3 +5,7 @@ recordings/*.json
 build/
 dist/
 *.spec
+server/.env
+server/data/
+agent/config.local.json
+agent/device_id.txt
