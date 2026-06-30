@@ -38,3 +38,17 @@ def is_connected():
 
 def connect():
     subprocess.run([config.ADB_PATH, "connect", config.ADB_SERIAL], capture_output=True)
+
+
+def force_stop(package):
+    _adb("shell", "am", "force-stop", package)
+
+
+def launch_app(package):
+    result = _adb("shell", "cmd", "package", "resolve-activity", "--brief", package)
+    lines = result.stdout.decode(errors="ignore").strip().splitlines()
+    component = lines[-1].strip() if lines else ""
+    if "/" not in component:
+        return False
+    _adb("shell", "am", "start", "-n", component)
+    return True

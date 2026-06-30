@@ -58,10 +58,21 @@ SEQUENCE = [
 INTERRUPTS = [
     {"name": "lvup", "template": "templates/lvup.png", "confidence": 0.85},
     {"name": "confirm", "template": "templates/confirm.png", "confidence": 0.85},
-    # in-game disconnect/network-error popup -- tap its exit/reconnect button
-    # from wherever the bot is, same as any other interrupt.
-    {"name": "reconnect", "template": "templates/reconnect.png", "confidence": 0.85},
+    # in-game disconnect/network-error popup -- instead of tapping a button,
+    # force-stop and relaunch the game app (see GAME_PACKAGE below).
+    {"name": "reconnect", "template": "templates/reconnect.png", "confidence": 0.85, "action": "restart_app"},
 ]
+
+# Android package name of the game, force-stopped and relaunched when the
+# "reconnect" interrupt above is detected. Find it with:
+#   adb shell dumpsys window | findstr mCurrentFocus
+GAME_PACKAGE = "com.devsisters.crg"
+
+# How long to wait after relaunching the app before resuming the sequence
+# from the top (start screen). The Play! button can take a few seconds past
+# the initial load to settle (popups sliding in, etc.), so this has margin
+# built in -- see the restart_app test in conversation history.
+APP_RELAUNCH_WAIT = 25.0
 
 # Path to LDPlayer's adb.exe and the serial of the running instance.
 # find_adb.locate() checks, in order: a per-machine override saved in

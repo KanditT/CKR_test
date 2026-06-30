@@ -69,6 +69,15 @@ def connect_if_needed():
     return adb_client.is_connected()
 
 
+def restart_app():
+    print(f"  reconnect popup detected -- force-stopping and relaunching {config.GAME_PACKAGE}")
+    adb_client.force_stop(config.GAME_PACKAGE)
+    time.sleep(2)
+    adb_client.launch_app(config.GAME_PACKAGE)
+    print(f"  waiting {config.APP_RELAUNCH_WAIT}s for the game to load...")
+    time.sleep(config.APP_RELAUNCH_WAIT)
+
+
 def preload_templates():
     for step in config.SEQUENCE + config.INTERRUPTS:
         if "template" in step:
@@ -101,7 +110,13 @@ def run_loop():
         for interrupt in config.INTERRUPTS:
             match = find_template(frame, interrupt["template"], interrupt["confidence"])
             if match:
-                click_match(match, interrupt["name"])
+                if interrupt.get("action") == "restart_app":
+                    restart_app()
+                    seq_index = 0
+                    step_wait_start = time.time()
+                    wait_target = None
+                else:
+                    click_match(match, interrupt["name"])
                 interrupted = True
                 break
 
