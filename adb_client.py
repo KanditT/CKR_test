@@ -3,12 +3,25 @@ import subprocess
 import cv2
 import numpy as np
 
-import config
+import config_loader
+
+
+CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
+def _run_adb(args, **kwargs):
+    config = config_loader.config
+    return subprocess.run(
+        [config.ADB_PATH, *args],
+        creationflags=CREATE_NO_WINDOW,
+        **kwargs,
+    )
 
 
 def _adb(*args):
-    return subprocess.run(
-        [config.ADB_PATH, "-s", config.ADB_SERIAL, *args],
+    config = config_loader.config
+    return _run_adb(
+        ["-s", config.ADB_SERIAL, *args],
         capture_output=True,
     )
 
@@ -29,7 +42,8 @@ def tap(x, y):
 
 
 def is_connected():
-    result = subprocess.run([config.ADB_PATH, "devices"], capture_output=True, text=True)
+    config = config_loader.config
+    result = _run_adb(["devices"], capture_output=True, text=True)
     return any(
         line.startswith(config.ADB_SERIAL) and "device" in line
         for line in result.stdout.splitlines()
@@ -37,4 +51,5 @@ def is_connected():
 
 
 def connect():
-    subprocess.run([config.ADB_PATH, "connect", config.ADB_SERIAL], capture_output=True)
+    config = config_loader.config
+    _run_adb(["connect", config.ADB_SERIAL], capture_output=True)

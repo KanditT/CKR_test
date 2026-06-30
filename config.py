@@ -32,7 +32,7 @@ SEQUENCE = [{'name': 'Play!', 'template': 'templates/start.png', 'confidence': 0
   'wait_before': (14.5, 16.0)},
  {'name': 'exit1', 'template': 'templates/exit2.png', 'confidence': 0.85, 'enabled': False},
  {'name': 'exit2', 'template': 'templates/exit3.png', 'confidence': 0.85, 'enabled': False},
- {'name': 'run2', 'template': 'templates/run2.png', 'confidence': 0.85, 'enabled': False},
+ {'name': 'run2', 'template': 'templates/run2.png', 'confidence': 0.85},
  {'name': 'end1', 'template': 'templates/end1.png', 'confidence': 0.85},
  {'name': 'end2', 'template': 'templates/end2.png', 'confidence': 0.85, 'timeout': 5.0},
  {'name': 'end3', 'template': 'templates/end3.png', 'confidence': 0.85, 'timeout': 5.0}]

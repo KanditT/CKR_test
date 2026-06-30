@@ -12,17 +12,24 @@ from tkinter import filedialog, messagebox, ttk
 import cv2
 
 import adb_client
-import config
+import config_loader
 
-CONFIG_PATH = "config.py"
+config = config_loader.config
+CONFIG_PATH = config_loader.CONFIG_PATH
 PREVIEW_MAX_WIDTH = 500
 PREVIEW_MAX_HEIGHT = 150
-APP_BG = "#f3f5f7"
-SURFACE_BG = "#ffffff"
-TEXT_COLOR = "#17202a"
-MUTED_COLOR = "#667085"
-ACCENT_COLOR = "#0f766e"
-DANGER_COLOR = "#b42318"
+APP_BG = "#170d08"
+SURFACE_BG = "#24160d"
+PANEL_BG = "#301f12"
+INPUT_BG = "#100804"
+BORDER_COLOR = "#6f4721"
+TEXT_COLOR = "#fff4d6"
+MUTED_COLOR = "#c89b54"
+ACCENT_COLOR = "#f4c542"
+ACCENT_ACTIVE = "#a86518"
+DANGER_COLOR = "#d83a2e"
+DANGER_ACTIVE = "#8f2118"
+WARNING_COLOR = "#ffb84d"
 
 
 def step_defaults(step):
@@ -212,6 +219,39 @@ class TemplateMatcher:
         return match
 
 
+class PageHost(ttk.Frame):
+    def __init__(self, master, **kwargs):
+        super().__init__(master, **kwargs)
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+        self.pages = []
+        self.current_index = None
+
+    def add(self, page, text=""):
+        page.grid(row=0, column=0, sticky="nsew")
+        page.grid_remove()
+        self.pages.append((page, text))
+        if self.current_index is None:
+            self.select(0)
+
+    def select(self, target):
+        if isinstance(target, int):
+            index = target
+        else:
+            index = next((i for i, (page, _text) in enumerate(self.pages) if page == target), 0)
+        if not 0 <= index < len(self.pages):
+            return
+        if self.current_index is not None:
+            self.pages[self.current_index][0].grid_remove()
+        self.current_index = index
+        self.pages[index][0].grid()
+
+    def index(self, target):
+        if isinstance(target, int):
+            return target
+        return next((i for i, (page, _text) in enumerate(self.pages) if page == target), 0)
+
+
 class BotApp(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -262,6 +302,7 @@ class BotApp(tk.Tk):
 
         self.create_widgets()
         self.refresh_tree()
+        self.log("Ready. Connect LDPlayer, then Start or Test Screen.")
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def setup_styles(self):
@@ -272,47 +313,165 @@ class BotApp(tk.Tk):
             pass
 
         default_font = ("Segoe UI", 10)
-        title_font = ("Segoe UI", 16, "bold")
+        title_font = ("Segoe UI", 18, "bold")
         label_font = ("Segoe UI", 9)
         button_font = ("Segoe UI", 10)
         style.configure(".", font=default_font, background=APP_BG, foreground=TEXT_COLOR)
         style.configure("TFrame", background=APP_BG)
+        style.configure("App.TFrame", background=APP_BG)
+        style.configure("Header.TFrame", background=APP_BG)
+        style.configure("Sidebar.TFrame", background=SURFACE_BG)
         style.configure("Surface.TFrame", background=SURFACE_BG)
+        style.configure("Panel.TFrame", background=PANEL_BG)
+        style.configure("PageHost.TFrame", background=APP_BG)
         style.configure("TLabel", background=APP_BG, foreground=TEXT_COLOR)
         style.configure("Title.TLabel", background=APP_BG, foreground=TEXT_COLOR, font=title_font)
         style.configure("Muted.TLabel", background=APP_BG, foreground=MUTED_COLOR, font=label_font)
-        style.configure("Status.TLabel", background=APP_BG, foreground=TEXT_COLOR, font=("Segoe UI", 10, "bold"))
-        style.configure("TButton", font=button_font, padding=(14, 7))
-        style.configure("Accent.TButton", font=button_font, padding=(16, 8), foreground="#ffffff", background=ACCENT_COLOR)
-        style.map("Accent.TButton", background=[("active", "#115e59"), ("pressed", "#134e4a")])
-        style.configure("Danger.TButton", font=button_font, padding=(16, 8), foreground="#ffffff", background=DANGER_COLOR)
-        style.map("Danger.TButton", background=[("active", "#912018"), ("pressed", "#7a271a")])
-        style.configure("Quiet.TButton", font=button_font, padding=(12, 7))
-        style.configure("TNotebook", background=APP_BG, borderwidth=0)
-        style.configure("TNotebook.Tab", padding=(18, 9), font=("Segoe UI", 10))
-        style.configure("TLabelframe", background=APP_BG, bordercolor="#d0d5dd")
-        style.configure("TLabelframe.Label", background=APP_BG, foreground=TEXT_COLOR, font=("Segoe UI", 10, "bold"))
-        style.configure("Treeview", font=("Segoe UI", 9), rowheight=26, fieldbackground=SURFACE_BG, background=SURFACE_BG)
-        style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"))
-        style.configure("TEntry", padding=(4, 4))
-        style.configure("TCombobox", padding=(4, 4))
+        style.configure("SidebarTitle.TLabel", background=SURFACE_BG, foreground=TEXT_COLOR, font=("Segoe UI", 12, "bold"))
+        style.configure("SidebarMuted.TLabel", background=SURFACE_BG, foreground=MUTED_COLOR, font=("Segoe UI", 9))
+        style.configure("Status.TLabel", background=APP_BG, foreground=TEXT_COLOR, font=("Segoe UI", 11, "bold"))
+        style.configure("Metric.TLabel", background=PANEL_BG, foreground=TEXT_COLOR, font=("Segoe UI", 11, "bold"))
+        style.configure("MetricMuted.TLabel", background=PANEL_BG, foreground=MUTED_COLOR, font=("Segoe UI", 8))
+        style.configure("TButton", font=button_font, padding=(14, 8), borderwidth=0, focusthickness=0)
+        style.configure(
+            "Accent.TButton",
+            font=("Segoe UI", 10, "bold"),
+            padding=(18, 9),
+            foreground="#2a1305",
+            background=ACCENT_COLOR,
+        )
+        style.map(
+            "Accent.TButton",
+            background=[("active", "#ffe08a"), ("pressed", ACCENT_ACTIVE), ("disabled", "#4b3520")],
+            foreground=[("disabled", "#9a7a4a")],
+        )
+        style.configure(
+            "Danger.TButton",
+            font=("Segoe UI", 10, "bold"),
+            padding=(18, 9),
+            foreground="#fff7f7",
+            background=DANGER_COLOR,
+        )
+        style.map("Danger.TButton", background=[("active", "#ef5a4d"), ("pressed", DANGER_ACTIVE)])
+        style.configure(
+            "Quiet.TButton",
+            font=button_font,
+            padding=(14, 8),
+            foreground=TEXT_COLOR,
+            background=PANEL_BG,
+            bordercolor=BORDER_COLOR,
+        )
+        style.map("Quiet.TButton", background=[("active", "#3d2918"), ("pressed", "#1b0f08")])
+        style.configure(
+            "Nav.TButton",
+            font=("Segoe UI", 10, "bold"),
+            anchor="w",
+            padding=(14, 11),
+            foreground=MUTED_COLOR,
+            background=SURFACE_BG,
+        )
+        style.map("Nav.TButton", background=[("active", "#332111")], foreground=[("active", TEXT_COLOR)])
+        style.configure(
+            "NavSelected.TButton",
+            font=("Segoe UI", 10, "bold"),
+            anchor="w",
+            padding=(14, 11),
+            foreground="#2a1305",
+            background=ACCENT_COLOR,
+        )
+        style.map("NavSelected.TButton", background=[("active", "#ffe08a"), ("pressed", ACCENT_ACTIVE)])
+        style.configure("TNotebook", background=APP_BG, borderwidth=0, tabmargins=(0, 4, 0, 0))
+        style.configure(
+            "TNotebook.Tab",
+            padding=(18, 8),
+            font=("Segoe UI", 10, "bold"),
+            background=PANEL_BG,
+            foreground=MUTED_COLOR,
+            borderwidth=0,
+        )
+        style.map(
+            "TNotebook.Tab",
+            background=[("selected", ACCENT_COLOR), ("active", "#3d2918")],
+            foreground=[("selected", "#2a1305")],
+        )
+        style.configure("TLabelframe", background=PANEL_BG, bordercolor=BORDER_COLOR, relief="solid")
+        style.configure(
+            "TLabelframe.Label",
+            background=PANEL_BG,
+            foreground=TEXT_COLOR,
+            font=("Segoe UI", 10, "bold"),
+        )
+        style.configure(
+            "Treeview",
+            font=("Segoe UI", 9),
+            rowheight=31,
+            fieldbackground=SURFACE_BG,
+            background=SURFACE_BG,
+            foreground=TEXT_COLOR,
+            borderwidth=0,
+            relief="flat",
+        )
+        style.map("Treeview", background=[("selected", ACCENT_ACTIVE)], foreground=[("selected", "#ffffff")])
+        style.configure(
+            "Treeview.Heading",
+            font=("Segoe UI", 9, "bold"),
+            background=PANEL_BG,
+            foreground=TEXT_COLOR,
+            relief="flat",
+            bordercolor=BORDER_COLOR,
+        )
+        style.configure(
+            "TEntry",
+            padding=(8, 7),
+            fieldbackground=INPUT_BG,
+            foreground=TEXT_COLOR,
+            insertcolor=TEXT_COLOR,
+            bordercolor=BORDER_COLOR,
+            lightcolor=BORDER_COLOR,
+            darkcolor=BORDER_COLOR,
+        )
+        style.configure(
+            "TCombobox",
+            padding=(8, 7),
+            fieldbackground=INPUT_BG,
+            background=INPUT_BG,
+            foreground=TEXT_COLOR,
+            arrowcolor=TEXT_COLOR,
+            bordercolor=BORDER_COLOR,
+        )
+        style.map(
+            "TCombobox",
+            fieldbackground=[("readonly", INPUT_BG), ("focus", INPUT_BG), ("!disabled", INPUT_BG)],
+            background=[("readonly", INPUT_BG), ("focus", INPUT_BG), ("!disabled", INPUT_BG)],
+            foreground=[("readonly", TEXT_COLOR), ("focus", TEXT_COLOR), ("!disabled", TEXT_COLOR)],
+            selectbackground=[("readonly", INPUT_BG), ("focus", INPUT_BG)],
+            selectforeground=[("readonly", TEXT_COLOR), ("focus", TEXT_COLOR)],
+            arrowcolor=[("readonly", ACCENT_COLOR), ("focus", ACCENT_COLOR)],
+        )
+        self.option_add("*TCombobox*Listbox.background", INPUT_BG)
+        self.option_add("*TCombobox*Listbox.foreground", TEXT_COLOR)
+        self.option_add("*TCombobox*Listbox.selectBackground", ACCENT_ACTIVE)
+        self.option_add("*TCombobox*Listbox.selectForeground", "#ffffff")
+        style.configure("TCheckbutton", background=PANEL_BG, foreground=TEXT_COLOR)
+        style.map("TCheckbutton", background=[("active", PANEL_BG)], foreground=[("disabled", MUTED_COLOR)])
+        style.configure("Vertical.TScrollbar", background=PANEL_BG, troughcolor=APP_BG, arrowcolor=MUTED_COLOR)
 
     def create_widgets(self):
         self.columnconfigure(0, weight=1)
         self.rowconfigure(1, weight=1)
 
-        command_bar = ttk.Frame(self, padding=(16, 14, 16, 10))
+        command_bar = ttk.Frame(self, padding=(18, 16, 18, 12), style="Header.TFrame")
         command_bar.grid(row=0, column=0, sticky="ew")
         command_bar.columnconfigure(1, weight=1)
 
-        title_block = ttk.Frame(command_bar)
+        title_block = ttk.Frame(command_bar, style="Header.TFrame")
         title_block.grid(row=0, column=0, sticky="w")
         ttk.Label(title_block, text="Cookie Run Runner", style="Title.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(title_block, text="ADB bot control, template capture, and match debug", style="Muted.TLabel").grid(
+        ttk.Label(title_block, text="ADB automation control panel", style="Muted.TLabel").grid(
             row=1, column=0, sticky="w", pady=(2, 0)
         )
 
-        status_bar = ttk.Frame(command_bar)
+        status_bar = ttk.Frame(command_bar, style="Header.TFrame")
         status_bar.grid(row=0, column=1, sticky="ew", padx=(28, 20))
         status_bar.columnconfigure(5, weight=1)
         ttk.Label(status_bar, text="State", style="Muted.TLabel").grid(row=0, column=0, sticky="w")
@@ -327,72 +486,73 @@ class BotApp(tk.Tk):
         ttk.Label(status_bar, text="Match", style="Muted.TLabel").grid(row=0, column=2, sticky="w")
         ttk.Label(status_bar, textvariable=self.match_summary_var, style="Status.TLabel").grid(row=1, column=2, sticky="w")
 
-        controls = ttk.Frame(command_bar)
+        controls = ttk.Frame(command_bar, style="Header.TFrame")
         controls.grid(row=0, column=2, sticky="e")
         ttk.Button(controls, text="Connect", command=self.connect_adb, style="Quiet.TButton").pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(controls, text="Start", command=self.start_loop, style="Accent.TButton").pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(controls, text="Pause", command=self.toggle_pause, style="Quiet.TButton").pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(controls, text="Stop", command=self.stop_loop, style="Danger.TButton").pack(side=tk.LEFT)
+        ttk.Button(controls, text="Kill", command=self.stop_loop, style="Danger.TButton").pack(side=tk.LEFT)
 
-        self.main_tabs = ttk.Notebook(self)
-        self.main_tabs.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 16))
+        workspace = ttk.Frame(self, padding=(18, 0, 18, 18), style="App.TFrame")
+        workspace.grid(row=1, column=0, sticky="nsew")
+        workspace.columnconfigure(1, weight=1)
+        workspace.rowconfigure(0, weight=1)
+
+        sidebar = ttk.Frame(workspace, padding=(12, 14), style="Sidebar.TFrame")
+        sidebar.grid(row=0, column=0, sticky="nsw", padx=(0, 14))
+        sidebar.grid_propagate(False)
+        sidebar.configure(width=174)
+        ttk.Label(sidebar, text="Workspace", style="SidebarTitle.TLabel").pack(anchor="w")
+        ttk.Label(sidebar, text="Select a task", style="SidebarMuted.TLabel").pack(anchor="w", pady=(2, 16))
+
+        self.nav_buttons = []
+        nav_items = (("Run", "Monitor"), ("Steps", "Edit flow"), ("Capture", "Templates"), ("Settings", "Device"))
+        for index, (label, hint) in enumerate(nav_items):
+            button = ttk.Button(
+                sidebar,
+                text=f"{label}\n{hint}",
+                style="Nav.TButton",
+                command=lambda page_index=index: self.select_main_page(page_index),
+            )
+            button.pack(fill=tk.X, pady=(0, 8))
+            self.nav_buttons.append(button)
+
+        ttk.Frame(sidebar, height=1, style="Panel.TFrame").pack(fill=tk.X, pady=(8, 12))
+        ttk.Label(sidebar, text="Config sync", style="SidebarMuted.TLabel").pack(anchor="w")
+        ttk.Label(sidebar, text="Save Config writes back to config.py", style="SidebarMuted.TLabel", wraplength=140).pack(
+            anchor="w", pady=(2, 0)
+        )
+
+        self.main_tabs = PageHost(workspace, style="PageHost.TFrame")
+        self.main_tabs.grid(row=0, column=1, sticky="nsew")
 
         self.create_run_tab()
         self.create_steps_tab()
         self.create_capture_tab()
         self.create_settings_tab()
+        self.select_main_page(0)
+
+    def select_main_page(self, index):
+        self.main_tabs.select(index)
+        for button_index, button in enumerate(getattr(self, "nav_buttons", [])):
+            button.configure(style="NavSelected.TButton" if button_index == index else "Nav.TButton")
 
     def create_run_tab(self):
         run = ttk.Frame(self.main_tabs, padding=14)
         run.columnconfigure(0, weight=1)
         run.rowconfigure(1, weight=1)
-        run.rowconfigure(2, weight=1)
         self.main_tabs.add(run, text="Run")
 
         actions = ttk.Frame(run)
         actions.grid(row=0, column=0, sticky="ew", pady=(0, 8))
-        ttk.Button(actions, text="Test Current Screen", command=self.test_current_screen, style="Accent.TButton").pack(
+        ttk.Label(actions, text="Debug what the bot can see right now.", style="Muted.TLabel").pack(
+            side=tk.LEFT, padx=(0, 12)
+        )
+        ttk.Button(actions, text="Test Screen", command=self.test_current_screen, style="Accent.TButton").pack(
             side=tk.LEFT, padx=(0, 8)
         )
-        ttk.Button(actions, text="Save Config", command=self.save_config_file, style="Quiet.TButton").pack(
-            side=tk.LEFT, padx=(0, 8)
-        )
-        ttk.Button(actions, text="Reload Config", command=self.load_config_file, style="Quiet.TButton").pack(side=tk.LEFT)
-
-        match_frame = ttk.LabelFrame(run, text="Current Screen Match", padding=(10, 8))
-        match_frame.grid(row=1, column=0, sticky="nsew", pady=(0, 8))
-        match_frame.columnconfigure(0, weight=1)
-        match_frame.rowconfigure(0, weight=1)
-        columns = ("result", "enabled", "group", "name", "score", "threshold", "template")
-        self.match_tree = ttk.Treeview(match_frame, columns=columns, show="headings")
-        headings = {
-            "result": "Result",
-            "enabled": "On",
-            "group": "Group",
-            "name": "Step",
-            "score": "Score",
-            "threshold": "Need",
-            "template": "Template",
-        }
-        widths = {
-            "result": 70,
-            "enabled": 50,
-            "group": 80,
-            "name": 130,
-            "score": 80,
-            "threshold": 80,
-            "template": 360,
-        }
-        for column in columns:
-            self.match_tree.heading(column, text=headings[column])
-            self.match_tree.column(column, width=widths[column], stretch=column == "template")
-        self.match_tree.grid(row=0, column=0, sticky="nsew")
-        match_scroll = ttk.Scrollbar(match_frame, orient="vertical", command=self.match_tree.yview)
-        match_scroll.grid(row=0, column=1, sticky="ns")
-        self.match_tree.configure(yscrollcommand=match_scroll.set)
 
         log_frame = ttk.LabelFrame(run, text="Log", padding=(10, 8))
-        log_frame.grid(row=2, column=0, sticky="nsew")
+        log_frame.grid(row=1, column=0, sticky="nsew")
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
         self.log_text = tk.Text(
@@ -400,10 +560,14 @@ class BotApp(tk.Tk):
             height=12,
             wrap="word",
             state="disabled",
-            background=SURFACE_BG,
+            background=INPUT_BG,
             foreground=TEXT_COLOR,
+            insertbackground=TEXT_COLOR,
+            selectbackground=ACCENT_ACTIVE,
             relief="flat",
             font=("Consolas", 9),
+            padx=10,
+            pady=8,
         )
         self.log_text.grid(row=0, column=0, sticky="nsew")
         scrollbar = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
@@ -457,9 +621,9 @@ class BotApp(tk.Tk):
         self.preview_canvas = tk.Canvas(
             preview,
             height=PREVIEW_MAX_HEIGHT,
-            background=SURFACE_BG,
+            background=INPUT_BG,
             highlightthickness=1,
-            highlightbackground="#c8c8c8",
+            highlightbackground=BORDER_COLOR,
         )
         self.preview_canvas.grid(row=0, column=0, sticky="ew")
         ttk.Label(preview, textvariable=self.preview_text_var).grid(row=1, column=0, sticky="w", pady=(6, 0))
@@ -506,10 +670,14 @@ class BotApp(tk.Tk):
             height=10,
             wrap="word",
             state="disabled",
-            background=SURFACE_BG,
+            background=INPUT_BG,
             foreground=TEXT_COLOR,
+            insertbackground=TEXT_COLOR,
+            selectbackground=ACCENT_ACTIVE,
             relief="flat",
             font=("Consolas", 9),
+            padx=10,
+            pady=8,
         )
         self.capture_log.grid(row=0, column=0, sticky="nsew")
         capture_scroll = ttk.Scrollbar(capture_body, orient="vertical", command=self.capture_log.yview)
@@ -531,7 +699,7 @@ class BotApp(tk.Tk):
 
         loop = ttk.LabelFrame(settings, text="Loop Settings", padding=(10, 8))
         loop.grid(row=3, column=0, columnspan=2, sticky="ew")
-        for col in range(4):
+        for col in range(12):
             loop.columnconfigure(col, weight=1)
         self.add_setting(loop, "Scan", self.scan_interval_var, 0)
         self.add_setting(loop, "Delay min", self.min_delay_var, 2)
@@ -597,6 +765,9 @@ class BotApp(tk.Tk):
         scrollbar = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
         scrollbar.grid(row=0, column=1, sticky="ns")
         tree.configure(yscrollcommand=scrollbar.set)
+        tree.tag_configure("odd", background="#1b1009")
+        tree.tag_configure("even", background=SURFACE_BG)
+        tree.tag_configure("disabled", foreground="#8f6b3a")
         tree.bind("<<TreeviewSelect>>", self.on_tree_select)
         tree.bind("<Double-1>", self.toggle_selected_enabled)
         return tree
@@ -618,10 +789,14 @@ class BotApp(tk.Tk):
         tree.delete(*tree.get_children())
         for index, step in enumerate(steps):
             iid = f"{group}:{index}"
+            tags = ["even" if index % 2 == 0 else "odd"]
+            if not step.get("enabled", True):
+                tags.append("disabled")
             tree.insert(
                 "",
                 "end",
                 iid=iid,
+                tags=tuple(tags),
                 values=(
                     "yes" if step.get("enabled", True) else "no",
                     step.get("name", ""),
@@ -754,7 +929,7 @@ class BotApp(tk.Tk):
             width // 2,
             PREVIEW_MAX_HEIGHT // 2,
             text=message,
-            fill="#555555",
+            fill=MUTED_COLOR,
             anchor="center",
         )
         self.preview_text_var.set(message)
@@ -990,27 +1165,26 @@ class BotApp(tk.Tk):
         rows = []
         for group, steps in (("sequence", self.sequence), ("interrupts", self.interrupts)):
             for step in steps:
-                template_path = step.get("template", "")
                 threshold = float(step.get("confidence", 0.85))
-                match = self.matcher.best_match(frame, template_path)
+                match = self.matcher.best_match(frame, step.get("template", ""))
                 score = match["score"] if match else 0.0
                 result = "PASS" if score >= threshold else "LOW"
                 enabled = bool(step.get("enabled", True))
-                rows.append((score, enabled, result, group, step.get("name", ""), threshold, template_path))
+                rows.append((score, enabled, result, group, step.get("name", ""), threshold))
 
         rows.sort(key=lambda row: (row[1], row[0]), reverse=True)
-        self.match_tree.delete(*self.match_tree.get_children())
-        for score, enabled, result, group, name, threshold, template_path in rows:
-            self.match_tree.insert(
-                "",
-                "end",
-                values=(result, "yes" if enabled else "no", group, name, f"{score:.3f}", f"{threshold:.3f}", template_path),
-            )
+        enabled_rows = [row for row in rows if row[1]]
+        top = enabled_rows[0] if enabled_rows else (rows[0] if rows else None)
+        if not top:
+            self.match_summary_var.set("-")
+            self.log("Current screen test: no steps configured.")
+            return
 
-        if rows:
-            top = rows[0]
-            self.match_summary_var.set(f"Best: {top[4]} {top[0]:.3f}/{top[5]:.3f}")
-            self.log(f"Current screen best enabled match: {top[4]} score={top[0]:.3f}")
+        self.match_summary_var.set(f"Best: {top[4]} {top[0]:.3f}/{top[5]:.3f}")
+        self.log(f"Current screen best match: {top[4]} {top[2]} score={top[0]:.3f} need={top[5]:.3f}")
+        for score, enabled, result, group, name, threshold in rows[:5]:
+            on_label = "on" if enabled else "off"
+            self.log(f"  {result:<4} {on_label:<3} {group}:{name} score={score:.3f} need={threshold:.3f}")
 
     def capture_log_message(self, message):
         if not hasattr(self, "capture_log"):
@@ -1061,20 +1235,8 @@ class BotApp(tk.Tk):
     def stop_loop(self):
         self.stop_event.set()
         self.pause_event.clear()
-        self.status_var.set("Stopping")
-        self.log("Stopping loop...")
-
-    def toggle_pause(self):
-        if not self.worker or not self.worker.is_alive():
-            return
-        if self.pause_event.is_set():
-            self.pause_event.clear()
-            self.status_var.set("Running")
-            self.log("Resumed.")
-        else:
-            self.pause_event.set()
-            self.status_var.set("Paused")
-            self.log("Paused.")
+        self.status_var.set("Killing")
+        self.log("Killing loop...")
 
     def loop_worker(self, sequence, interrupts, settings):
         try:
@@ -1258,10 +1420,11 @@ class BotApp(tk.Tk):
 
     def load_config_file(self):
         if self.worker and self.worker.is_alive():
-            messagebox.showinfo("Loop running", "Stop the loop before reloading config.")
+            messagebox.showinfo("Loop running", "Kill the loop before reloading config.")
             return
         try:
-            importlib.reload(config)
+            global config
+            config = config_loader.reload_config()
         except Exception as exc:
             messagebox.showerror("Reload failed", str(exc))
             return

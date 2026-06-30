@@ -4,8 +4,10 @@ import random
 import cv2
 import keyboard
 
-import config
+import config_loader
 import adb_client
+
+config = config_loader.config
 
 paused = False
 running = True

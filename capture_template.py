@@ -13,8 +13,10 @@ import sys
 import os
 import cv2
 
-import config
+import config_loader
 import adb_client
+
+config = config_loader.config
 
 
 def main():
