@@ -12,19 +12,27 @@ Capture each template with:
     python capture_template.py <name>
 """
 
-SEQUENCE = [{'name': 'Play!', 'template': 'templates/start.png', 'confidence': 0.85, 'wait_before': (4.0, 5.0)},
- {'name': 'Buy Boost', 'template': 'templates/Buy Boost.png', 'confidence': 0.85},
- {'name': 'Buying Boost', 'template': 'templates/new_step.png', 'confidence': 0.85},
- {'name': 'time2',
+SEQUENCE = [{'name': 'Click Play!', 'template': 'templates/start.png', 'confidence': 0.85, 'wait_before': (4.0, 8.0)},
+ {'name': 'Reset Click (Heart)', 'template': 'templates/reset click2.png', 'confidence': 0.85},
+ {'name': 'Click Buy Booster', 'template': 'templates/Buy Boost.png', 'confidence': 0.85},
+ {'name': 'Click Buy', 'template': 'templates/new_step.png', 'confidence': 0.85},
+ {'name': 'Click Buy Relay', 'template': 'templates/relay.png', 'confidence': 0.85},
+ {'name': 'Click Buy', 'template': 'templates/new_step.png', 'confidence': 0.85},
+ {'name': 'Click 1200',
   'template': 'templates/time2.png',
   'confidence': 0.85,
   'retry_after': 3.0,
   'retry_template': 'templates/start.png'},
- {'name': 'time2_1', 'template': 'templates/time2_1.png', 'confidence': 0.85},
- {'name': 'time2_2', 'template': 'templates/time2_2.png', 'confidence': 0.85},
- {'name': 'time2_3', 'template': 'templates/time2_3.png', 'confidence': 0.85},
+ {'name': 'Click Multi', 'template': 'templates/time2_1.png', 'confidence': 0.85},
+ {'name': 'Click Multi-Buy', 'template': 'templates/time2_2.png', 'confidence': 0.85},
+ {'name': 'Click Play!', 'template': 'templates/time2_3.png', 'confidence': 0.85},
  {'name': 'start2', 'template': 'templates/start2.png', 'confidence': 0.85, 'enabled': False},
- {'name': 'run1', 'template': 'templates/run1.png', 'confidence': 0.85, 'post_delay': (0.0, 0.15)},
+ {'name': 'run1',
+  'template': 'templates/run1.png',
+  'confidence': 0.85,
+  'enabled': False,
+  'post_delay': (0.0, 0.15)},
+ {'name': 'Click Use Booster', 'template': 'templates/replay_game_start.png', 'confidence': 0.78},
  {'name': 'exit',
   'template': 'templates/exit.png',
   'confidence': 0.85,
@@ -32,10 +40,10 @@ SEQUENCE = [{'name': 'Play!', 'template': 'templates/start.png', 'confidence': 0
   'wait_before': (14.5, 16.0)},
  {'name': 'exit1', 'template': 'templates/exit2.png', 'confidence': 0.85, 'enabled': False},
  {'name': 'exit2', 'template': 'templates/exit3.png', 'confidence': 0.85, 'enabled': False},
- {'name': 'run2', 'template': 'templates/run2.png', 'confidence': 0.85},
- {'name': 'end1', 'template': 'templates/end1.png', 'confidence': 0.85},
- {'name': 'end2', 'template': 'templates/end2.png', 'confidence': 0.85, 'timeout': 5.0},
- {'name': 'end3', 'template': 'templates/end3.png', 'confidence': 0.85, 'timeout': 5.0}]
+ {'name': 'Click Use Relay', 'template': 'templates/run2.png', 'confidence': 0.85, 'enabled': False},
+ {'name': 'Click OK', 'template': 'templates/end1.png', 'confidence': 0.85},
+ {'name': 'Click Open all', 'template': 'templates/end2.png', 'confidence': 0.85, 'timeout': 5.0},
+ {'name': 'Click Confirm', 'template': 'templates/end3.png', 'confidence': 0.85, 'timeout': 5.0}]
 
 INTERRUPTS = [{'name': 'lvup', 'template': 'templates/lvup.png', 'confidence': 0.85},
  {'name': 'confirm', 'template': 'templates/confirm.png', 'confidence': 0.85}]
@@ -46,7 +54,7 @@ ADB_SERIAL = '127.0.0.1:5555'
 
 # How often to scan the screen while waiting for the next button to appear.
 # Kept low so fast-appearing/disappearing buttons (like run1) aren't missed.
-SCAN_INTERVAL = 0.15
+SCAN_INTERVAL = 0.05
 
 # Random human-like delay AFTER each click, before the bot looks for the
 # next button.
@@ -61,6 +69,20 @@ CLICK_JITTER_PX = 4
 # is still showing after a tap, and how long to wait before each recheck.
 CLICK_RETRY_LIMIT = 4
 CLICK_VERIFY_DELAY = 0.6
+
+# Recorder input points for jump/slide replay. Tune these once for your
+# LDPlayer resolution, then press Save Config in the GUI.
+RECORDER_INPUT_MODE = 'adb'
+RECORDER_JUMP_TAP = (165, 625)
+RECORDER_SLIDE_SWIPE = (1115, 625, 1115, 625, 140)
+RECORDER_LOOP_REPLAY_ENABLED = True
+RECORDER_LOOP_TRIGGER_MODE = 'template'
+RECORDER_LOOP_TRIGGER_STEP = 'Click Use Booster'
+RECORDER_LOOP_TRIGGER_TEMPLATE = 'templates/replay_game_start.png'
+RECORDER_LOOP_TRIGGER_CONFIDENCE = 0.78
+RECORDER_LOOP_REPLAY_FILE = 'recordings/Record_001.json'
+RECORDER_LOOP_REPLAY_DELAY = -0.5
+RECORDER_LOOP_TAP_TRIGGER = False
 
 # Hotkeys (require running the terminal as admin on some systems for global hooks)
 PAUSE_HOTKEY = "f8"

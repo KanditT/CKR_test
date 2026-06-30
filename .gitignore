@@ -1,6 +1,7 @@
 .venv/
 __pycache__/
 *.py[cod]
+recordings/*.json
 build/
 dist/
 *.spec

@@ -41,6 +41,19 @@ def tap(x, y):
     _adb("shell", "input", "tap", str(int(x)), str(int(y)))
 
 
+def swipe(x1, y1, x2, y2, duration_ms=120):
+    _adb(
+        "shell",
+        "input",
+        "swipe",
+        str(int(x1)),
+        str(int(y1)),
+        str(int(x2)),
+        str(int(y2)),
+        str(int(duration_ms)),
+    )
+
+
 def is_connected():
     config = config_loader.config
     result = _run_adb(["devices"], capture_output=True, text=True)
