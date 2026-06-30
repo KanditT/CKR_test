@@ -17,7 +17,12 @@ SEQUENCE = [
     # lands while the game is still mid-transition and gets ignored. The
     # bot re-checks after tapping and retaps if the same button is still
     # showing, instead of assuming the tap worked and waiting forever.
-    {"name": "start",  "template": "templates/start.png",  "confidence": 0.85, "verify_click": True},
+    # {"name": "start",  "template": "templates/start.png",  "confidence": 0.85, "verify_click": True},
+    {"name": "start",  "template": "templates/start.png",  "confidence": 0.85},
+    {"name": "time2", "template": "templates/time2.png", "confidence": 0.85},
+    {"name": "time2_1", "template": "templates/time2_1.png", "confidence": 0.85},
+    {"name": "time2_2", "template": "templates/time2_2.png", "confidence": 0.85},
+    {"name": "time2_3", "template": "templates/time2_3.png", "confidence": 0.85},
     # run1 can appear and disappear fast -- wait almost no time after start2
     # so the bot is already watching for it the instant it shows up.
     # {"name": "start2", "template": "templates/start2.png", "confidence": 0.85, "post_delay": (0.0, 0.15), "verify_click": True},
