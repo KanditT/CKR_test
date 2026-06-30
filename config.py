@@ -23,7 +23,7 @@ SEQUENCE = [
     # sometimes a different popup (e.g. Leaderboard) opens instead of the
     # Boost shop -- if time2 hasn't shown up after a few seconds, check
     # whether the Play! button is still there and press it again.
-    {"name": "time2", "template": "templates/time2.png", "confidence": 0.85, "retry_after": 3.0, "retry_template": "templates/start.png"},
+    {"name": "time2", "template": "templates/time2.png", "confidence": 0.85, "retry_after": 3.0},
     {"name": "time2_1", "template": "templates/time2_1.png", "confidence": 0.85},
     {"name": "time2_2", "template": "templates/time2_2.png", "confidence": 0.85},
     # {"name": "time2_3", "template": "templates/time2_3.png", "confidence": 0.85},
@@ -61,7 +61,12 @@ INTERRUPTS = [
 ]
 
 # Path to LDPlayer's adb.exe and the serial of the running instance.
-ADB_PATH = r"E:\LDPlayer\LDPlayer14\adb.exe"
+# find_adb.locate() checks, in order: a per-machine override saved in
+# local_settings.json (not committed -- see find_adb.save_adb_path), common
+# LDPlayer install locations across drive letters, then "adb" on PATH. This
+# hardcoded path is only the last-resort fallback if none of that finds it.
+import find_adb
+ADB_PATH = find_adb.locate(default=r"E:\LDPlayer\LDPlayer14\adb.exe")
 ADB_SERIAL = "127.0.0.1:5555"
 
 # How often to scan the screen while waiting for the next button to appear.

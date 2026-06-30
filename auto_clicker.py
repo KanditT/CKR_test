@@ -63,28 +63,23 @@ def human_delay(delay_range=None):
         time.sleep(0.1)
 
 
-def main():
-    keyboard.add_hotkey(config.PAUSE_HOTKEY, toggle_pause)
-    keyboard.add_hotkey(config.QUIT_HOTKEY, quit_bot)
-
-    print(f"Connecting to {config.ADB_SERIAL} via adb...")
+def connect_if_needed():
     if not adb_client.is_connected():
         adb_client.connect()
-    if not adb_client.is_connected():
-        print(f"Could not connect to {config.ADB_SERIAL}.")
-        print("Make sure LDPlayer is running and ADB debugging (local connection) is enabled in its settings.")
-        sys.exit(1)
-    print("Connected.")
+    return adb_client.is_connected()
 
+
+def preload_templates():
     for step in config.SEQUENCE + config.INTERRUPTS:
         if "template" in step:
             load_template(step["template"])
-    print(f"Preloaded {len(_template_cache)} template(s).")
-    print(f"Sequence: {' -> '.join(s['name'] for s in config.SEQUENCE)} -> (loops)")
-    print(f"Interrupts watched at every step: {', '.join(i['name'] for i in config.INTERRUPTS)}")
-    print(f"Controls: [{config.PAUSE_HOTKEY}] pause/resume   [{config.QUIT_HOTKEY}] quit")
-    print("Starting in 3 seconds...")
-    time.sleep(3)
+    return len(_template_cache)
+
+
+def run_loop():
+    global running, paused
+    running = True
+    paused = False
 
     seq_index = 0
     step_wait_start = time.time()
@@ -157,11 +152,12 @@ def main():
             next_step = config.SEQUENCE[seq_index]["name"]
             print(f"  -> waiting for next step: {next_step}")
         elif step.get("retry_after") and (time.time() - step_wait_start) >= step["retry_after"]:
-            retry_template = step.get("retry_template", "templates/start.png")
+            prev_step = config.SEQUENCE[(seq_index - 1) % len(config.SEQUENCE)]
+            retry_template = step.get("retry_template", prev_step["template"])
             retry_match = find_template(frame, retry_template, step.get("retry_confidence", 0.85))
             if retry_match:
-                print(f"  '{step['name']}' not found, still on start page -- pressing start again")
-                click_match(retry_match, f"{step['name']}-retry-start")
+                print(f"  '{step['name']}' not found, retrying '{prev_step['name']}'")
+                click_match(retry_match, f"{step['name']}-retry-{prev_step['name']}")
                 step_wait_start = time.time()
                 human_delay()
             else:
@@ -170,6 +166,28 @@ def main():
             time.sleep(config.SCAN_INTERVAL)
 
     print("Bot stopped.")
+
+
+def main():
+    keyboard.add_hotkey(config.PAUSE_HOTKEY, toggle_pause)
+    keyboard.add_hotkey(config.QUIT_HOTKEY, quit_bot)
+
+    print(f"Connecting to {config.ADB_SERIAL} via adb...")
+    if not connect_if_needed():
+        print(f"Could not connect to {config.ADB_SERIAL}.")
+        print("Make sure LDPlayer is running and ADB debugging (local connection) is enabled in its settings.")
+        sys.exit(1)
+    print("Connected.")
+
+    count = preload_templates()
+    print(f"Preloaded {count} template(s).")
+    print(f"Sequence: {' -> '.join(s['name'] for s in config.SEQUENCE)} -> (loops)")
+    print(f"Interrupts watched at every step: {', '.join(i['name'] for i in config.INTERRUPTS)}")
+    print(f"Controls: [{config.PAUSE_HOTKEY}] pause/resume   [{config.QUIT_HOTKEY}] quit")
+    print("Starting in 3 seconds...")
+    time.sleep(3)
+
+    run_loop()
 
 
 if __name__ == "__main__":
