@@ -50,7 +50,7 @@ INTERRUPTS = [
 ]
 
 # Path to LDPlayer's adb.exe and the serial of the running instance.
-ADB_PATH = r"E:\LDPlayer\LDPlayer14\adb.exe"
+ADB_PATH = r"C:\LDPlayer\LDPlayer14\adb.exe"
 ADB_SERIAL = "127.0.0.1:5555"
 
 # How often to scan the screen while waiting for the next button to appear.
