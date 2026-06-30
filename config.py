@@ -27,12 +27,14 @@ SEQUENCE = [{'name': 'Click Play!', 'template': 'templates/start.png', 'confiden
  {'name': 'Click Multi-Buy', 'template': 'templates/time2_2.png', 'confidence': 0.85},
  {'name': 'Click Play!', 'template': 'templates/time2_3.png', 'confidence': 0.85},
  {'name': 'start2', 'template': 'templates/start2.png', 'confidence': 0.85, 'enabled': False},
- {'name': 'run1',
+ {'name': 'Click Use Booster',
   'template': 'templates/run1.png',
   'confidence': 0.85,
-  'enabled': False,
   'post_delay': (0.0, 0.15)},
- {'name': 'Click Use Booster', 'template': 'templates/replay_game_start.png', 'confidence': 0.78},
+ {'name': 'Click Use Booster',
+  'template': 'templates/replay_game_start.png',
+  'confidence': 0.78,
+  'enabled': False},
  {'name': 'exit',
   'template': 'templates/exit.png',
   'confidence': 0.85,
@@ -40,13 +42,16 @@ SEQUENCE = [{'name': 'Click Play!', 'template': 'templates/start.png', 'confiden
   'wait_before': (14.5, 16.0)},
  {'name': 'exit1', 'template': 'templates/exit2.png', 'confidence': 0.85, 'enabled': False},
  {'name': 'exit2', 'template': 'templates/exit3.png', 'confidence': 0.85, 'enabled': False},
- {'name': 'Click Use Relay', 'template': 'templates/run2.png', 'confidence': 0.85, 'enabled': False},
- {'name': 'Click OK', 'template': 'templates/end1.png', 'confidence': 0.85},
+ {'name': 'Click Use Relay', 'template': 'templates/run2.png', 'confidence': 0.85},
+ {'name': 'Click OK', 'template': 'templates/end1.png', 'confidence': 0.85, 'wait_before': (2.0, 4.0)},
  {'name': 'Click Open all', 'template': 'templates/end2.png', 'confidence': 0.85, 'timeout': 5.0},
  {'name': 'Click Confirm', 'template': 'templates/end3.png', 'confidence': 0.85, 'timeout': 5.0}]
 
 INTERRUPTS = [{'name': 'lvup', 'template': 'templates/lvup.png', 'confidence': 0.85},
  {'name': 'confirm', 'template': 'templates/confirm.png', 'confidence': 0.85}]
+
+# UI theme for the desktop control panel: Slate, Light, or Brown.
+UI_THEME = 'Slate'
 
 # Path to LDPlayer's adb.exe and the serial of the running instance.
 ADB_PATH = 'C:\\LDPlayer\\LDPlayer14\\adb.exe'
@@ -75,7 +80,7 @@ CLICK_VERIFY_DELAY = 0.6
 RECORDER_INPUT_MODE = 'adb'
 RECORDER_JUMP_TAP = (165, 625)
 RECORDER_SLIDE_SWIPE = (1115, 625, 1115, 625, 140)
-RECORDER_LOOP_REPLAY_ENABLED = True
+RECORDER_LOOP_REPLAY_ENABLED = False
 RECORDER_LOOP_TRIGGER_MODE = 'template'
 RECORDER_LOOP_TRIGGER_STEP = 'Click Use Booster'
 RECORDER_LOOP_TRIGGER_TEMPLATE = 'templates/replay_game_start.png'

@@ -25,18 +25,102 @@ config = config_loader.config
 CONFIG_PATH = config_loader.CONFIG_PATH
 PREVIEW_MAX_WIDTH = 500
 PREVIEW_MAX_HEIGHT = 150
-APP_BG = "#170d08"
-SURFACE_BG = "#24160d"
-PANEL_BG = "#301f12"
-INPUT_BG = "#100804"
-BORDER_COLOR = "#6f4721"
-TEXT_COLOR = "#fff4d6"
-MUTED_COLOR = "#c89b54"
-ACCENT_COLOR = "#f4c542"
-ACCENT_ACTIVE = "#a86518"
-DANGER_COLOR = "#d83a2e"
-DANGER_ACTIVE = "#8f2118"
-WARNING_COLOR = "#ffb84d"
+DEFAULT_UI_THEME = "Slate"
+THEME_PRESETS = {
+    "Slate": {
+        "app": "#0f172a",
+        "surface": "#111827",
+        "panel": "#1f2937",
+        "input": "#020617",
+        "border": "#334155",
+        "text": "#f8fafc",
+        "muted": "#94a3b8",
+        "accent": "#22c55e",
+        "accent_active": "#15803d",
+        "accent_text": "#04130a",
+        "danger": "#ef4444",
+        "danger_active": "#991b1b",
+        "warning": "#f59e0b",
+        "quiet_active": "#334155",
+        "quiet_pressed": "#0f172a",
+        "nav_active": "#1e293b",
+        "tab_active": "#334155",
+        "odd": "#0b1220",
+        "disabled": "#64748b",
+        "selected_text": "#ffffff",
+    },
+    "Light": {
+        "app": "#e2e8f0",
+        "surface": "#f8fafc",
+        "panel": "#ffffff",
+        "input": "#ffffff",
+        "border": "#cbd5e1",
+        "text": "#0f172a",
+        "muted": "#475569",
+        "accent": "#2563eb",
+        "accent_active": "#1d4ed8",
+        "accent_text": "#ffffff",
+        "danger": "#dc2626",
+        "danger_active": "#991b1b",
+        "warning": "#d97706",
+        "quiet_active": "#dbeafe",
+        "quiet_pressed": "#bfdbfe",
+        "nav_active": "#e2e8f0",
+        "tab_active": "#e2e8f0",
+        "odd": "#f1f5f9",
+        "disabled": "#94a3b8",
+        "selected_text": "#ffffff",
+    },
+    "Brown": {
+        "app": "#170d08",
+        "surface": "#24160d",
+        "panel": "#301f12",
+        "input": "#100804",
+        "border": "#6f4721",
+        "text": "#fff4d6",
+        "muted": "#c89b54",
+        "accent": "#f4c542",
+        "accent_active": "#a86518",
+        "accent_text": "#2a1305",
+        "danger": "#d83a2e",
+        "danger_active": "#8f2118",
+        "warning": "#ffb84d",
+        "quiet_active": "#3d2918",
+        "quiet_pressed": "#1b0f08",
+        "nav_active": "#332111",
+        "tab_active": "#3d2918",
+        "odd": "#1b1009",
+        "disabled": "#8f6b3a",
+        "selected_text": "#ffffff",
+    },
+}
+
+
+def set_theme_globals(theme_name):
+    global CURRENT_UI_THEME
+    global APP_BG, SURFACE_BG, PANEL_BG, INPUT_BG, BORDER_COLOR
+    global TEXT_COLOR, MUTED_COLOR, ACCENT_COLOR, ACCENT_ACTIVE
+    global DANGER_COLOR, DANGER_ACTIVE, WARNING_COLOR, THEME
+
+    if theme_name not in THEME_PRESETS:
+        theme_name = DEFAULT_UI_THEME
+    THEME = THEME_PRESETS[theme_name]
+    CURRENT_UI_THEME = theme_name
+    APP_BG = THEME["app"]
+    SURFACE_BG = THEME["surface"]
+    PANEL_BG = THEME["panel"]
+    INPUT_BG = THEME["input"]
+    BORDER_COLOR = THEME["border"]
+    TEXT_COLOR = THEME["text"]
+    MUTED_COLOR = THEME["muted"]
+    ACCENT_COLOR = THEME["accent"]
+    ACCENT_ACTIVE = THEME["accent_active"]
+    DANGER_COLOR = THEME["danger"]
+    DANGER_ACTIVE = THEME["danger_active"]
+    WARNING_COLOR = THEME["warning"]
+
+
+set_theme_globals(getattr(config, "UI_THEME", DEFAULT_UI_THEME))
 DEFAULT_JUMP_TAP = (165, 625)
 DEFAULT_SLIDE_SWIPE = (1115, 625, 1115, 625, 140)
 DEFAULT_RECORDING_FILE = os.path.join("recordings", "last_recording.json")
@@ -317,6 +401,7 @@ class BotApp(tk.Tk):
         self.minsize(1080, 680)
         self.configure(background=APP_BG)
         self.setup_styles()
+        self.ui_theme_var = tk.StringVar(value=CURRENT_UI_THEME)
 
         self.sequence = [step_defaults(step) for step in copy.deepcopy(config.SEQUENCE)]
         self.interrupts = [step_defaults(step) for step in copy.deepcopy(config.INTERRUPTS)]
@@ -470,13 +555,13 @@ class BotApp(tk.Tk):
             "Accent.TButton",
             font=("Segoe UI", 10, "bold"),
             padding=(18, 9),
-            foreground="#2a1305",
+            foreground=THEME["accent_text"],
             background=ACCENT_COLOR,
         )
         style.map(
             "Accent.TButton",
-            background=[("active", "#ffe08a"), ("pressed", ACCENT_ACTIVE), ("disabled", "#4b3520")],
-            foreground=[("disabled", "#9a7a4a")],
+            background=[("active", ACCENT_COLOR), ("pressed", ACCENT_ACTIVE), ("disabled", PANEL_BG)],
+            foreground=[("disabled", MUTED_COLOR)],
         )
         style.configure(
             "Danger.TButton",
@@ -494,7 +579,7 @@ class BotApp(tk.Tk):
             background=PANEL_BG,
             bordercolor=BORDER_COLOR,
         )
-        style.map("Quiet.TButton", background=[("active", "#3d2918"), ("pressed", "#1b0f08")])
+        style.map("Quiet.TButton", background=[("active", THEME["quiet_active"]), ("pressed", THEME["quiet_pressed"])])
         style.configure(
             "Nav.TButton",
             font=("Segoe UI", 10, "bold"),
@@ -503,16 +588,16 @@ class BotApp(tk.Tk):
             foreground=MUTED_COLOR,
             background=SURFACE_BG,
         )
-        style.map("Nav.TButton", background=[("active", "#332111")], foreground=[("active", TEXT_COLOR)])
+        style.map("Nav.TButton", background=[("active", THEME["nav_active"])], foreground=[("active", TEXT_COLOR)])
         style.configure(
             "NavSelected.TButton",
             font=("Segoe UI", 10, "bold"),
             anchor="w",
             padding=(14, 11),
-            foreground="#2a1305",
+            foreground=THEME["accent_text"],
             background=ACCENT_COLOR,
         )
-        style.map("NavSelected.TButton", background=[("active", "#ffe08a"), ("pressed", ACCENT_ACTIVE)])
+        style.map("NavSelected.TButton", background=[("active", ACCENT_COLOR), ("pressed", ACCENT_ACTIVE)])
         style.configure("TNotebook", background=APP_BG, borderwidth=0, tabmargins=(0, 4, 0, 0))
         style.configure(
             "TNotebook.Tab",
@@ -524,8 +609,8 @@ class BotApp(tk.Tk):
         )
         style.map(
             "TNotebook.Tab",
-            background=[("selected", ACCENT_COLOR), ("active", "#3d2918")],
-            foreground=[("selected", "#2a1305")],
+            background=[("selected", ACCENT_COLOR), ("active", THEME["tab_active"])],
+            foreground=[("selected", THEME["accent_text"])],
         )
         style.configure("TLabelframe", background=PANEL_BG, bordercolor=BORDER_COLOR, relief="solid")
         style.configure(
@@ -544,7 +629,7 @@ class BotApp(tk.Tk):
             borderwidth=0,
             relief="flat",
         )
-        style.map("Treeview", background=[("selected", ACCENT_ACTIVE)], foreground=[("selected", "#ffffff")])
+        style.map("Treeview", background=[("selected", ACCENT_ACTIVE)], foreground=[("selected", THEME["selected_text"])])
         style.configure(
             "Treeview.Heading",
             font=("Segoe UI", 9, "bold"),
@@ -584,7 +669,7 @@ class BotApp(tk.Tk):
         self.option_add("*TCombobox*Listbox.background", INPUT_BG)
         self.option_add("*TCombobox*Listbox.foreground", TEXT_COLOR)
         self.option_add("*TCombobox*Listbox.selectBackground", ACCENT_ACTIVE)
-        self.option_add("*TCombobox*Listbox.selectForeground", "#ffffff")
+        self.option_add("*TCombobox*Listbox.selectForeground", THEME["selected_text"])
         style.configure("TCheckbutton", background=PANEL_BG, foreground=TEXT_COLOR)
         style.map("TCheckbutton", background=[("active", PANEL_BG)], foreground=[("disabled", MUTED_COLOR)])
         style.configure("Vertical.TScrollbar", background=PANEL_BG, troughcolor=APP_BG, arrowcolor=MUTED_COLOR)
@@ -751,35 +836,35 @@ class BotApp(tk.Tk):
         editor_shell.columnconfigure(0, weight=1)
         editor_shell.rowconfigure(0, weight=1)
 
-        editor_canvas = tk.Canvas(
+        self.editor_canvas = tk.Canvas(
             editor_shell,
             background=APP_BG,
             borderwidth=0,
             highlightthickness=0,
             yscrollincrement=24,
         )
-        editor_scroll = ttk.Scrollbar(editor_shell, orient="vertical", command=editor_canvas.yview)
-        editor_canvas.configure(yscrollcommand=editor_scroll.set)
-        editor_canvas.grid(row=0, column=0, sticky="nsew")
+        editor_scroll = ttk.Scrollbar(editor_shell, orient="vertical", command=self.editor_canvas.yview)
+        self.editor_canvas.configure(yscrollcommand=editor_scroll.set)
+        self.editor_canvas.grid(row=0, column=0, sticky="nsew")
         editor_scroll.grid(row=0, column=1, sticky="ns")
 
-        editor = ttk.Frame(editor_canvas)
-        editor_window = editor_canvas.create_window((0, 0), window=editor, anchor="nw")
+        editor = ttk.Frame(self.editor_canvas)
+        editor_window = self.editor_canvas.create_window((0, 0), window=editor, anchor="nw")
 
         def sync_editor_scroll(_event=None):
-            editor_canvas.configure(scrollregion=editor_canvas.bbox("all"))
+            self.editor_canvas.configure(scrollregion=self.editor_canvas.bbox("all"))
 
         def sync_editor_width(event):
-            editor_canvas.itemconfigure(editor_window, width=event.width)
+            self.editor_canvas.itemconfigure(editor_window, width=event.width)
 
         def scroll_editor(event):
             if event.delta:
-                editor_canvas.yview_scroll(int(-event.delta / 120), "units")
+                self.editor_canvas.yview_scroll(int(-event.delta / 120), "units")
 
         editor.bind("<Configure>", sync_editor_scroll)
-        editor_canvas.bind("<Configure>", sync_editor_width)
-        editor_shell.bind("<Enter>", lambda _event: editor_canvas.bind_all("<MouseWheel>", scroll_editor))
-        editor_shell.bind("<Leave>", lambda _event: editor_canvas.unbind_all("<MouseWheel>"))
+        self.editor_canvas.bind("<Configure>", sync_editor_width)
+        editor_shell.bind("<Enter>", lambda _event: self.editor_canvas.bind_all("<MouseWheel>", scroll_editor))
+        editor_shell.bind("<Leave>", lambda _event: self.editor_canvas.unbind_all("<MouseWheel>"))
 
         editor.columnconfigure(0, weight=1)
         editor.rowconfigure(3, weight=1)
@@ -1306,8 +1391,9 @@ class BotApp(tk.Tk):
         scrollbar = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
         scrollbar.grid(row=0, column=1, sticky="ns")
         tree.configure(yscrollcommand=scrollbar.set)
-        tree.tag_configure("odd", background="#1b1009")
+        tree.tag_configure("odd", background=THEME["odd"])
         tree.tag_configure("even", background=SURFACE_BG)
+        tree.tag_configure("disabled", foreground=THEME["disabled"])
         return tree
 
     def create_settings_tab(self):
@@ -1315,16 +1401,32 @@ class BotApp(tk.Tk):
         settings.columnconfigure(1, weight=1)
         self.main_tabs.add(settings, text="Settings")
 
-        ttk.Label(settings, text="ADB path").grid(row=0, column=0, sticky="w", pady=3)
-        ttk.Entry(settings, textvariable=self.adb_path_var).grid(row=0, column=1, sticky="ew", pady=3, padx=(8, 0))
-        ttk.Label(settings, text="Serial").grid(row=1, column=0, sticky="w", pady=3)
-        ttk.Entry(settings, textvariable=self.adb_serial_var).grid(row=1, column=1, sticky="ew", pady=3, padx=(8, 0))
+        ttk.Label(settings, text="Theme").grid(row=0, column=0, sticky="w", pady=3)
+        theme_row = ttk.Frame(settings)
+        theme_row.grid(row=0, column=1, sticky="ew", pady=3, padx=(8, 0))
+        theme_row.columnconfigure(0, weight=1)
+        theme_combo = ttk.Combobox(
+            theme_row,
+            textvariable=self.ui_theme_var,
+            values=tuple(THEME_PRESETS.keys()),
+            state="readonly",
+        )
+        theme_combo.grid(row=0, column=0, sticky="ew")
+        theme_combo.bind("<<ComboboxSelected>>", lambda _event: self.apply_theme_selection())
+        ttk.Button(theme_row, text="Apply", command=self.apply_theme_selection, style="Quiet.TButton").grid(
+            row=0, column=1, padx=(6, 0)
+        )
+
+        ttk.Label(settings, text="ADB path").grid(row=1, column=0, sticky="w", pady=3)
+        ttk.Entry(settings, textvariable=self.adb_path_var).grid(row=1, column=1, sticky="ew", pady=3, padx=(8, 0))
+        ttk.Label(settings, text="Serial").grid(row=2, column=0, sticky="w", pady=3)
+        ttk.Entry(settings, textvariable=self.adb_serial_var).grid(row=2, column=1, sticky="ew", pady=3, padx=(8, 0))
         ttk.Button(settings, text="Connect", command=self.connect_adb, style="Accent.TButton").grid(
-            row=2, column=1, sticky="w", pady=(6, 14), padx=(8, 0)
+            row=3, column=1, sticky="w", pady=(6, 14), padx=(8, 0)
         )
 
         loop = ttk.LabelFrame(settings, text="Loop Settings", padding=(10, 8))
-        loop.grid(row=3, column=0, columnspan=2, sticky="ew")
+        loop.grid(row=4, column=0, columnspan=2, sticky="ew")
         for col in range(12):
             loop.columnconfigure(col, weight=1)
         self.add_setting(loop, "Scan", self.scan_interval_var, 0)
@@ -1335,7 +1437,7 @@ class BotApp(tk.Tk):
         self.add_setting(loop, "Verify delay", self.verify_delay_var, 10)
 
         config_buttons = ttk.Frame(settings)
-        config_buttons.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        config_buttons.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         ttk.Button(config_buttons, text="Reload Config", command=self.load_config_file, style="Quiet.TButton").pack(
             side=tk.LEFT, padx=(0, 6)
         )
@@ -1344,6 +1446,41 @@ class BotApp(tk.Tk):
     def add_setting(self, parent, label, variable, column):
         ttk.Label(parent, text=label).grid(row=0, column=column, sticky="w")
         ttk.Entry(parent, textvariable=variable, width=8).grid(row=0, column=column + 1, sticky="w", padx=(4, 10))
+
+    def apply_theme_selection(self):
+        set_theme_globals(self.ui_theme_var.get())
+        self.ui_theme_var.set(CURRENT_UI_THEME)
+        self.configure(background=APP_BG)
+        self.setup_styles()
+        self.refresh_theme_widgets()
+        self.refresh_tree()
+        self.log(f"Theme applied: {CURRENT_UI_THEME}")
+
+    def refresh_theme_widgets(self):
+        for text_widget_name in ("log_text", "capture_log"):
+            text_widget = getattr(self, text_widget_name, None)
+            if text_widget:
+                text_widget.configure(
+                    background=INPUT_BG,
+                    foreground=TEXT_COLOR,
+                    insertbackground=TEXT_COLOR,
+                    selectbackground=ACCENT_ACTIVE,
+                )
+
+        preview_canvas = getattr(self, "preview_canvas", None)
+        if preview_canvas:
+            preview_canvas.configure(background=INPUT_BG, highlightbackground=BORDER_COLOR)
+
+        editor_canvas = getattr(self, "editor_canvas", None)
+        if editor_canvas:
+            editor_canvas.configure(background=APP_BG)
+
+        for tree_name in ("sequence_tree", "interrupt_tree", "record_tree"):
+            tree = getattr(self, tree_name, None)
+            if tree:
+                tree.tag_configure("odd", background=THEME["odd"])
+                tree.tag_configure("even", background=SURFACE_BG)
+                tree.tag_configure("disabled", foreground=THEME["disabled"])
 
     def add_edit_row(self, parent, label, key, row, browse=False):
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=2)
@@ -1434,9 +1571,9 @@ class BotApp(tk.Tk):
         x_scrollbar = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
         x_scrollbar.grid(row=1, column=0, sticky="ew")
         tree.configure(yscrollcommand=y_scrollbar.set, xscrollcommand=x_scrollbar.set)
-        tree.tag_configure("odd", background="#1b1009")
+        tree.tag_configure("odd", background=THEME["odd"])
         tree.tag_configure("even", background=SURFACE_BG)
-        tree.tag_configure("disabled", foreground="#8f6b3a")
+        tree.tag_configure("disabled", foreground=THEME["disabled"])
         tree.bind("<<TreeviewSelect>>", self.on_tree_select)
         tree.bind("<Button-1>", self.on_step_tree_click)
         tree.bind("<Double-1>", self.toggle_selected_enabled)
@@ -2904,6 +3041,14 @@ class BotApp(tk.Tk):
         settings["input_mode"] = "adb"
         settings["replay_start_delay"] = 0.0
         settings["replay_overlays"] = self.parse_replay_overlays(payload)
+        if settings["replay_overlays"]:
+            overlay_labels = ", ".join(
+                f"{overlay.get('name', 'overlay')} -> {overlay.get('template', '-')}"
+                for overlay in settings["replay_overlays"]
+            )
+            self.threadsafe_log(f"Loop replay overlays loaded: {overlay_labels}")
+        else:
+            self.threadsafe_log(f"Loop replay overlays: none in {os.path.basename(path)}")
         if loop_replay_settings["delay"]:
             events = [
                 {**event, "t": max(0.0, round(float(event.get("t", 0.0)) + loop_replay_settings["delay"], 3))}
@@ -3177,6 +3322,7 @@ class BotApp(tk.Tk):
         updates = {
             "SEQUENCE": [compact_step(step) for step in self.sequence],
             "INTERRUPTS": [compact_step(step) for step in self.interrupts],
+            "UI_THEME": CURRENT_UI_THEME,
             "ADB_PATH": self.adb_path_var.get().strip(),
             "ADB_SERIAL": self.adb_serial_var.get().strip(),
             "SCAN_INTERVAL": settings["scan_interval"],
@@ -3224,6 +3370,8 @@ class BotApp(tk.Tk):
         self.jitter_var.set(str(config.CLICK_JITTER_PX))
         self.retry_limit_var.set(str(config.CLICK_RETRY_LIMIT))
         self.verify_delay_var.set(str(config.CLICK_VERIFY_DELAY))
+        self.ui_theme_var.set(str(getattr(config, "UI_THEME", DEFAULT_UI_THEME)))
+        self.apply_theme_selection()
         self.set_recorder_config_vars()
         self.sequence = [step_defaults(step) for step in copy.deepcopy(config.SEQUENCE)]
         self.interrupts = [step_defaults(step) for step in copy.deepcopy(config.INTERRUPTS)]
