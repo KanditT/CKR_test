@@ -32,6 +32,7 @@ AGENT_DIR = get_agent_dir()
 ROOT_DIR = AGENT_DIR if getattr(sys, "frozen", False) else AGENT_DIR.parent
 DEFAULT_CONFIG_PATH = AGENT_DIR / "config.local.json"
 DEVICE_ID_PATH = AGENT_DIR / "device_id.txt"
+RUNTIME_BOT_CONFIG_PATH = AGENT_DIR / "bot_config.runtime.json"
 
 sys.path.insert(0, str(ROOT_DIR))
 
@@ -88,6 +89,7 @@ class Agent:
         self.device_name = str(settings.get("device_name") or platform.node() or self.device_id)
         self.bot_process: subprocess.Popen[str] | None = None
         self.ws = None
+        self.runtime_bot_config: dict[str, Any] | None = None
         apply_adb_config(settings)
 
     def build_url(self) -> str:
@@ -198,7 +200,22 @@ class Agent:
             "bot_pid": None if self.bot_process is None else self.bot_process.pid,
         }
 
+    def apply_runtime_bot_config(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        bot_config = payload.get("bot_config")
+        if not isinstance(bot_config, dict):
+            return self.runtime_bot_config
+        self.runtime_bot_config = bot_config
+        device = bot_config.get("device") or {}
+        if device.get("adb_path"):
+            self.settings["adb_path"] = str(device["adb_path"])
+        if device.get("adb_serial"):
+            self.settings["adb_serial"] = str(device["adb_serial"])
+        config_loader.apply_bot_config(config_loader.config, bot_config)
+        apply_adb_config(self.settings)
+        return bot_config
+
     async def command_test_ldplayer(self, _payload: dict[str, Any]) -> dict[str, Any]:
+        self.apply_runtime_bot_config(_payload)
         apply_adb_config(self.settings)
         if not adb_client.is_connected():
             adb_client.connect()
@@ -212,9 +229,13 @@ class Agent:
     async def command_start_bot(self, _payload: dict[str, Any]) -> dict[str, Any]:
         if self.bot_process and self.bot_process.poll() is None:
             return {"already_running": True, "pid": self.bot_process.pid}
+        bot_config = self.apply_runtime_bot_config(_payload)
         env = os.environ.copy()
         apply_adb_env(self.settings, env)
         env["CKR_DISABLE_BOT_HOTKEYS"] = "1"
+        if bot_config:
+            RUNTIME_BOT_CONFIG_PATH.write_text(json.dumps(bot_config), encoding="utf-8")
+            env["CKR_BOT_CONFIG_PATH"] = str(RUNTIME_BOT_CONFIG_PATH)
         if getattr(sys, "frozen", False):
             config_path = str(self.settings.get("_config_path") or DEFAULT_CONFIG_PATH)
             command = [sys.executable, "--run-bot", "--config", config_path]
@@ -256,6 +277,7 @@ class Agent:
         return {"killed": True, "pid": pid}
 
     async def command_screenshot(self, _payload: dict[str, Any]) -> dict[str, Any]:
+        self.apply_runtime_bot_config(_payload)
         frame = adb_client.screencap()
         ok, png = cv2.imencode(".png", frame)
         if not ok:

@@ -134,7 +134,7 @@ def main():
         wait_before = step.get("wait_before")
         if wait_before:
             if wait_target is None:
-                wait_target = random.uniform(*wait_before) if isinstance(wait_before, tuple) else wait_before
+                wait_target = random.uniform(*wait_before) if isinstance(wait_before, (tuple, list)) else wait_before
             if (time.time() - step_wait_start) < wait_target:
                 time.sleep(config.SCAN_INTERVAL)
                 continue

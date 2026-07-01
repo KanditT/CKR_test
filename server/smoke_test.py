@@ -108,12 +108,14 @@ async def exercise_agent_flow(license_key: str) -> None:
         user_command = request_json(
             "/api/user/devices/SMOKE-DEVICE/commands",
             "POST",
-            {"license_key": license_key, "command": "status", "payload": {}},
+            {"license_key": license_key, "command": "test_ldplayer", "payload": {}},
         )
         user_command_id = user_command["command_id"]
         command_message = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
         assert command_message["type"] == "command", command_message
         assert command_message["id"] == user_command_id, command_message
+        assert command_message["payload"]["bot_config"]["device"]["adb_serial"] == "127.0.0.2:5555", command_message
+        assert command_message["payload"]["bot_config"]["loop"]["scan_interval"] == 0.07, command_message
         await ws.send(
             json.dumps(
                 {
@@ -139,7 +141,7 @@ async def exercise_agent_flow(license_key: str) -> None:
 
 def exercise_user_download(license_key: str) -> None:
     html = request_bytes("/user")
-    assert b"Cookie Run Agent Portal" in html, "user page did not render"
+    assert b"Cookie Run User Control" in html, "user page did not render"
     zip_bytes = request_bytes("/api/user/download-agent", "POST", {"license_key": license_key})
     with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as file:
         file.write(zip_bytes)
@@ -153,6 +155,17 @@ def exercise_user_download(license_key: str) -> None:
             assert config["server_url"] == WS_URL, config
     finally:
         zip_path.unlink(missing_ok=True)
+
+
+def exercise_user_config(license_key: str) -> None:
+    config_response = request_json("/api/user/config", "POST", {"license_key": license_key})
+    config = config_response["config"]
+    config["device"]["adb_serial"] = "127.0.0.2:5555"
+    config["loop"]["scan_interval"] = 0.07
+    config["sequence"][0]["enabled"] = False
+    saved = request_json("/api/user/config/save", "POST", {"license_key": license_key, "config": config})
+    assert saved["config"]["device"]["adb_serial"] == "127.0.0.2:5555", saved
+    assert saved["config"]["sequence"][0]["enabled"] is False, saved
 
 
 def main() -> None:
@@ -196,6 +209,7 @@ def main() -> None:
         )
         license_key = created["license_key"]
         exercise_user_download(license_key)
+        exercise_user_config(license_key)
         asyncio.run(exercise_agent_flow(license_key))
         request_json(f"/api/admin/licenses/{license_key}", "DELETE")
         print("smoke ok")

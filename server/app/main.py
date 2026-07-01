@@ -6,6 +6,7 @@ import secrets
 import sqlite3
 import io
 import zipfile
+from copy import deepcopy
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -14,6 +15,8 @@ from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
+
+from app.default_config import default_bot_config
 
 
 DATA_DIR = Path(os.getenv("CKR_DATA_DIR", "server/data"))
@@ -103,6 +106,13 @@ def init_db() -> None:
                 response_json text,
                 created_at text not null,
                 completed_at text
+            );
+
+            create table if not exists license_configs (
+                license_key text primary key,
+                config_json text not null,
+                updated_at text not null,
+                foreign key (license_key) references licenses (license_key)
             );
             """
         )
@@ -257,6 +267,163 @@ def user_summary_payload(license_key: str) -> dict[str, Any]:
     }
 
 
+def to_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on", "x", "[x]"}
+    return default
+
+
+def to_float(value: Any, default: float) -> float:
+    if value in (None, ""):
+        return default
+    return float(value)
+
+
+def to_int(value: Any, default: int) -> int:
+    if value in (None, ""):
+        return default
+    return int(float(value))
+
+
+def optional_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    return float(value)
+
+
+def normalize_delay(value: Any) -> float | list[float] | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, str):
+        parts = [part.strip() for part in value.split(",") if part.strip()]
+        if len(parts) == 2:
+            return [float(parts[0]), float(parts[1])]
+        if len(parts) == 1:
+            return float(parts[0])
+        return None
+    if isinstance(value, (list, tuple)):
+        parts = [part for part in value if part not in (None, "")]
+        if len(parts) == 2:
+            return [float(parts[0]), float(parts[1])]
+        if len(parts) == 1:
+            return float(parts[0])
+        return None
+    return float(value)
+
+
+def normalize_step(raw_step: Any) -> dict[str, Any]:
+    if not isinstance(raw_step, dict):
+        raw_step = {}
+    step: dict[str, Any] = {
+        "name": str(raw_step.get("name") or "New Step").strip()[:120],
+        "template": str(raw_step.get("template") or "").strip()[:260],
+        "confidence": max(0.0, min(1.0, to_float(raw_step.get("confidence"), 0.85))),
+        "enabled": to_bool(raw_step.get("enabled"), True),
+    }
+    if to_bool(raw_step.get("verify_click"), False):
+        step["verify_click"] = True
+    for key in ("post_delay", "wait_before"):
+        delay = normalize_delay(raw_step.get(key))
+        if delay is not None:
+            step[key] = delay
+    for key in ("timeout", "retry_after", "retry_confidence"):
+        value = optional_float(raw_step.get(key))
+        if value is not None:
+            step[key] = value
+    retry_template = str(raw_step.get("retry_template") or "").strip()
+    if retry_template:
+        step["retry_template"] = retry_template[:260]
+    return step
+
+
+def normalize_bot_config(candidate: Any) -> dict[str, Any]:
+    config = default_bot_config()
+    if not isinstance(candidate, dict):
+        return config
+
+    device = candidate.get("device") if isinstance(candidate.get("device"), dict) else {}
+    config["device"]["adb_path"] = str(device.get("adb_path") or config["device"]["adb_path"]).strip()
+    config["device"]["adb_serial"] = str(device.get("adb_serial") or config["device"]["adb_serial"]).strip()
+
+    loop = candidate.get("loop") if isinstance(candidate.get("loop"), dict) else {}
+    config["loop"]["scan_interval"] = max(0.01, to_float(loop.get("scan_interval"), config["loop"]["scan_interval"]))
+    config["loop"]["min_delay"] = max(0.0, to_float(loop.get("min_delay"), config["loop"]["min_delay"]))
+    config["loop"]["max_delay"] = max(config["loop"]["min_delay"], to_float(loop.get("max_delay"), config["loop"]["max_delay"]))
+    config["loop"]["jitter"] = max(0, to_int(loop.get("jitter"), config["loop"]["jitter"]))
+    config["loop"]["retry_limit"] = max(0, to_int(loop.get("retry_limit"), config["loop"]["retry_limit"]))
+    config["loop"]["verify_delay"] = max(0.0, to_float(loop.get("verify_delay"), config["loop"]["verify_delay"]))
+
+    recorder = candidate.get("recorder") if isinstance(candidate.get("recorder"), dict) else {}
+    config["recorder"].update(
+        {
+            "input_mode": str(recorder.get("input_mode") or config["recorder"]["input_mode"]).strip(),
+            "loop_replay_enabled": to_bool(recorder.get("loop_replay_enabled"), config["recorder"]["loop_replay_enabled"]),
+            "loop_trigger_mode": str(recorder.get("loop_trigger_mode") or config["recorder"]["loop_trigger_mode"]).strip(),
+            "loop_trigger_step": str(recorder.get("loop_trigger_step") or config["recorder"]["loop_trigger_step"]).strip(),
+            "loop_trigger_template": str(
+                recorder.get("loop_trigger_template") or config["recorder"]["loop_trigger_template"]
+            ).strip(),
+            "loop_trigger_confidence": max(
+                0.0,
+                min(
+                    1.0,
+                    to_float(recorder.get("loop_trigger_confidence"), config["recorder"]["loop_trigger_confidence"]),
+                ),
+            ),
+            "loop_replay_file": str(recorder.get("loop_replay_file") or config["recorder"]["loop_replay_file"]).strip(),
+            "loop_replay_delay": to_float(recorder.get("loop_replay_delay"), config["recorder"]["loop_replay_delay"]),
+            "loop_tap_trigger": to_bool(recorder.get("loop_tap_trigger"), config["recorder"]["loop_tap_trigger"]),
+        }
+    )
+    jump_tap = recorder.get("jump_tap")
+    if isinstance(jump_tap, (list, tuple)) and len(jump_tap) >= 2:
+        config["recorder"]["jump_tap"] = [to_int(jump_tap[0], 165), to_int(jump_tap[1], 625)]
+    slide_swipe = recorder.get("slide_swipe")
+    if isinstance(slide_swipe, (list, tuple)) and len(slide_swipe) >= 5:
+        config["recorder"]["slide_swipe"] = [to_int(value, 0) for value in slide_swipe[:5]]
+
+    if isinstance(candidate.get("sequence"), list):
+        config["sequence"] = [normalize_step(step) for step in candidate["sequence"]]
+    if isinstance(candidate.get("interrupts"), list):
+        config["interrupts"] = [normalize_step(step) for step in candidate["interrupts"]]
+    return config
+
+
+def get_license_bot_config(license_key: str) -> dict[str, Any]:
+    with db_conn() as conn:
+        row = conn.execute("select config_json from license_configs where license_key = ?", (license_key,)).fetchone()
+    if row is None:
+        return default_bot_config()
+    try:
+        return normalize_bot_config(json.loads(row["config_json"]))
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return default_bot_config()
+
+
+def save_license_bot_config(license_key: str, config: dict[str, Any]) -> dict[str, Any]:
+    normalized = normalize_bot_config(config)
+    with db_conn() as conn:
+        if get_license(conn, license_key) is None:
+            raise HTTPException(status_code=404, detail="license not found")
+        conn.execute(
+            """
+            insert into license_configs (license_key, config_json, updated_at)
+            values (?, ?, ?)
+            on conflict(license_key) do update set
+                config_json = excluded.config_json,
+                updated_at = excluded.updated_at
+            """,
+            (license_key, json.dumps(normalized, separators=(",", ":")), utc_iso()),
+        )
+    return normalized
+
+
 async def dispatch_device_command(device_id: str, command: str, payload: dict[str, Any]) -> dict[str, Any]:
     command = command.strip()
     if not command:
@@ -264,6 +431,9 @@ async def dispatch_device_command(device_id: str, command: str, payload: dict[st
     session = agents.get(device_id)
     if not session:
         raise HTTPException(status_code=404, detail="agent is offline")
+    payload = deepcopy(payload)
+    if command in {"test_ldplayer", "start_bot", "screenshot"} and "bot_config" not in payload:
+        payload["bot_config"] = get_license_bot_config(session.license_key)
     with db_conn() as conn:
         cursor = conn.execute(
             """
@@ -380,6 +550,7 @@ def delete_license(license_key: str, x_admin_token: str | None = Header(default=
         for device_id in devices:
             conn.execute("delete from command_logs where device_id = ?", (device_id,))
         conn.execute("delete from devices where license_key = ?", (license_key,))
+        conn.execute("delete from license_configs where license_key = ?", (license_key,))
         result = conn.execute("delete from licenses where license_key = ?", (license_key,))
     if result.rowcount == 0:
         raise HTTPException(status_code=404, detail="license not found")
@@ -412,6 +583,39 @@ async def user_summary(request: Request) -> dict[str, Any]:
     if not license_key:
         raise HTTPException(status_code=400, detail="license_key is required")
     return user_summary_payload(license_key)
+
+
+@app.post("/api/user/config")
+async def user_get_config(request: Request) -> dict[str, Any]:
+    body = await request.json()
+    license_key = str(body.get("license_key", "")).strip()
+    if not license_key:
+        raise HTTPException(status_code=400, detail="license_key is required")
+    with db_conn() as conn:
+        license_row = get_license(conn, license_key)
+        if license_row is None:
+            raise HTTPException(status_code=404, detail="license not found")
+        ok, reason = license_is_valid(license_row)
+        if not ok:
+            raise HTTPException(status_code=403, detail=reason)
+    return {"config": get_license_bot_config(license_key)}
+
+
+@app.post("/api/user/config/save")
+async def user_save_config(request: Request) -> dict[str, Any]:
+    body = await request.json()
+    license_key = str(body.get("license_key", "")).strip()
+    if not license_key:
+        raise HTTPException(status_code=400, detail="license_key is required")
+    with db_conn() as conn:
+        license_row = get_license(conn, license_key)
+        if license_row is None:
+            raise HTTPException(status_code=404, detail="license not found")
+        ok, reason = license_is_valid(license_row)
+        if not ok:
+            raise HTTPException(status_code=403, detail=reason)
+    config = save_license_bot_config(license_key, body.get("config") or {})
+    return {"config": config, "status": "saved"}
 
 
 @app.post("/api/user/devices/{device_id}/commands")
@@ -791,98 +995,190 @@ USER_HTML = r"""
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Cookie Run Agent Portal</title>
+  <title>Cookie Run User Control</title>
   <style>
     :root {
       color-scheme: dark;
-      --bg:#0f172a; --panel:#111827; --card:#1f2937; --line:#334155;
-      --text:#f8fafc; --muted:#94a3b8; --accent:#22c55e; --danger:#ef4444; --warn:#f59e0b;
+      --bg:#0b1120; --panel:#111827; --panel2:#151f31; --line:#2f3b52;
+      --text:#f8fafc; --muted:#94a3b8; --accent:#22c55e; --blue:#38bdf8;
+      --danger:#ef4444; --warn:#f59e0b; --input:#020617;
     }
     * { box-sizing:border-box; }
     body { margin:0; background:var(--bg); color:var(--text); font-family:Segoe UI, Arial, sans-serif; }
-    header { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:18px 24px; background:#020617; border-bottom:1px solid var(--line); }
-    h1 { margin:0; font-size:20px; }
-    main { padding:18px 24px; display:grid; grid-template-columns:340px 1fr; gap:16px; }
-    section { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; }
+    header { display:flex; justify-content:space-between; align-items:flex-start; gap:18px; padding:18px 24px; background:#020617; border-bottom:1px solid var(--line); }
+    h1 { margin:0; font-size:21px; }
     h2 { margin:0 0 12px; font-size:15px; }
+    h3 { margin:14px 0 8px; font-size:13px; color:var(--muted); }
+    main { padding:18px 24px; display:grid; grid-template-columns:310px 1fr; gap:16px; }
+    section, .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; }
     label { display:block; margin:10px 0 4px; color:var(--muted); font-size:12px; }
-    input { width:100%; background:#020617; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:10px; }
-    button { background:var(--card); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:8px 11px; cursor:pointer; white-space:nowrap; }
+    input, select { width:100%; background:var(--input); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:9px; }
+    input[type="checkbox"] { width:auto; }
+    button { background:var(--panel2); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:8px 11px; cursor:pointer; white-space:nowrap; }
     button.primary { background:var(--accent); color:#052e16; border-color:var(--accent); font-weight:700; }
     button.danger { background:var(--danger); color:#fff; border-color:var(--danger); }
+    button.active { border-color:var(--blue); color:#e0f2fe; background:#0c2235; }
+    button:disabled { opacity:.48; cursor:not-allowed; }
+    table { width:100%; border-collapse:separate; border-spacing:0 7px; font-size:12px; min-width:980px; }
+    th { text-align:left; color:var(--muted); font-size:11px; padding:0 7px 2px; }
+    td { background:#0f172a; padding:7px; vertical-align:middle; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
+    td:first-child { border-left:1px solid var(--line); border-radius:7px 0 0 7px; }
+    td:last-child { border-right:1px solid var(--line); border-radius:0 7px 7px 0; }
+    td input { padding:6px; font-size:12px; }
     .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-    .metric { display:grid; grid-template-columns:110px 1fr; gap:6px; font-size:13px; margin:6px 0; }
-    .label { color:var(--muted); }
-    .mono { font-family:Consolas, monospace; }
+    .stack { display:grid; gap:10px; }
     .muted { color:var(--muted); }
+    .mono { font-family:Consolas, monospace; }
     .ok { color:var(--accent); font-weight:700; }
     .bad { color:var(--danger); font-weight:700; }
     .warn { color:var(--warn); font-weight:700; }
-    table { width:100%; border-collapse:separate; border-spacing:0 8px; font-size:13px; }
-    th { text-align:left; color:var(--muted); font-size:12px; padding:0 8px 2px; }
-    td { background:#101827; text-align:left; padding:10px 8px; vertical-align:top; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
-    td:first-child { border-left:1px solid var(--line); border-radius:8px 0 0 8px; }
-    td:last-child { border-right:1px solid var(--line); border-radius:0 8px 8px 0; }
-    #log { height:280px; overflow:auto; background:#020617; border:1px solid var(--line); padding:10px; border-radius:6px; font-family:Consolas, monospace; font-size:12px; }
+    .metric-grid { display:grid; grid-template-columns:repeat(4, minmax(120px, 1fr)); gap:10px; }
+    .metric { background:#0f172a; border:1px solid var(--line); border-radius:8px; padding:10px; }
+    .metric .label { color:var(--muted); font-size:11px; margin-bottom:4px; }
+    .metric .value { font-size:14px; font-weight:700; }
+    .page { display:none; }
+    .page.active { display:block; }
+    .scroll { overflow:auto; border:1px solid var(--line); border-radius:8px; padding:0 8px; background:#08111f; }
+    #log { height:300px; overflow:auto; background:#020617; border:1px solid var(--line); padding:10px; border-radius:6px; font-family:Consolas, monospace; font-size:12px; }
     #screenshot { max-width:100%; border:1px solid var(--line); border-radius:8px; display:none; margin-top:10px; }
-    @media (max-width: 900px) { header { align-items:flex-start; flex-direction:column; } main { grid-template-columns:1fr; } }
+    .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .small { font-size:12px; }
+    @media (max-width: 980px) { header, main { display:block; } main { padding:14px; } section { margin-bottom:14px; } .metric-grid, .grid2 { grid-template-columns:1fr; } }
   </style>
 </head>
 <body>
   <header>
     <div>
-      <h1>Cookie Run Agent Portal</h1>
+      <h1>Cookie Run User Control</h1>
       <div class="muted">__PUBLIC_BASE_URL__</div>
     </div>
-    <a class="muted" href="/admin">Admin</a>
+    <div class="row">
+      <button id="navMonitor" class="active" onclick="selectPage('monitor')">Run Monitor</button>
+      <button id="navFlow" onclick="selectPage('flow')">Step Flow</button>
+      <button id="navSettings" onclick="selectPage('settings')">Setting Device</button>
+    </div>
   </header>
   <main>
-    <div>
+    <aside class="stack">
       <section>
         <h2>License</h2>
         <label>License Key</label>
         <input id="licenseKey" placeholder="CKR-XXXX-XXXX-XXXX-XXXX" />
         <p class="row">
-          <button class="primary" onclick="saveLicense()">Connect</button>
+          <button class="primary" onclick="saveLicense()">Verify</button>
           <button onclick="refresh()">Refresh</button>
           <button id="downloadButton" onclick="downloadAgent()" disabled>Download Agent</button>
         </p>
-        <div id="licenseInfo" class="muted">Enter your license key.</div>
+        <div id="licenseInfo" class="muted small">Enter your license key.</div>
       </section>
-      <section style="margin-top:16px">
-        <h2>Latest Screenshot</h2>
-        <div class="muted">Use Screenshot after the agent is online.</div>
-        <img id="screenshot" alt="LDPlayer screenshot" />
+      <section>
+        <h2>Selected Device</h2>
+        <div id="selectedDevice" class="muted small">No agent connected.</div>
       </section>
-    </div>
+    </aside>
 
     <div>
-      <section>
-        <h2>Device</h2>
-        <table>
-          <thead><tr><th>Status</th><th>Device</th><th>Actions</th></tr></thead>
-          <tbody id="devices"></tbody>
-        </table>
-      </section>
-      <section style="margin-top:16px">
-        <h2>Log</h2>
+      <section id="pageMonitor" class="page active">
+        <div class="row" style="justify-content:space-between">
+          <h2>Run Monitor</h2>
+          <div class="row">
+            <button onclick="sendSelectedCommand('status')">Status</button>
+            <button onclick="sendSelectedCommand('test_ldplayer')">Test LDPlayer</button>
+            <button class="primary" onclick="sendSelectedCommand('start_bot')">Run</button>
+            <button class="danger" onclick="sendSelectedCommand('kill_bot')">Kill</button>
+            <button onclick="sendSelectedCommand('screenshot')">Screenshot</button>
+          </div>
+        </div>
+        <div id="metrics" class="metric-grid"></div>
+        <h3>Devices</h3>
+        <div class="scroll"><table><thead><tr><th>Status</th><th>Device</th><th>Last Seen</th><th>Actions</th></tr></thead><tbody id="devices"></tbody></table></div>
+        <h3>Latest Screenshot</h3>
+        <img id="screenshot" alt="LDPlayer screenshot" />
+        <h3>Log</h3>
         <div id="log"></div>
+      </section>
+
+      <section id="pageFlow" class="page">
+        <div class="row" style="justify-content:space-between">
+          <h2>Step Flow</h2>
+          <div class="row">
+            <button id="groupSequence" class="active" onclick="selectGroup('sequence')">Sequence</button>
+            <button id="groupInterrupts" onclick="selectGroup('interrupts')">Interrupts</button>
+            <button onclick="addStep()">Add Step</button>
+            <button class="primary" onclick="saveConfig()">Save Config</button>
+            <button onclick="loadConfig(true)">Reload</button>
+          </div>
+        </div>
+        <div class="scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>On</th><th>Name</th><th>Conf</th><th>Template</th><th>Replay</th>
+                <th>Post Delay</th><th>Wait Before</th><th>Timeout</th><th>Verify</th>
+                <th>Retry</th><th>Retry Template</th><th>Retry Conf</th><th>Move</th>
+              </tr>
+            </thead>
+            <tbody id="steps"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="pageSettings" class="page">
+        <div class="row" style="justify-content:space-between">
+          <h2>Setting Device</h2>
+          <div class="row">
+            <button onclick="sendSelectedCommand('test_ldplayer')">Test LDPlayer</button>
+            <button class="primary" onclick="saveConfig()">Save Config</button>
+          </div>
+        </div>
+        <div class="grid2">
+          <div class="card">
+            <h2>Device</h2>
+            <label>ADB path</label><input id="adbPath" oninput="setConfig('device.adb_path', this.value)" />
+            <label>Serial</label><input id="adbSerial" oninput="setConfig('device.adb_serial', this.value)" />
+          </div>
+          <div class="card">
+            <h2>Loop Settings</h2>
+            <label>Scan interval</label><input id="scanInterval" oninput="setNumber('loop.scan_interval', this.value)" />
+            <label>Delay min</label><input id="delayMin" oninput="setNumber('loop.min_delay', this.value)" />
+            <label>Delay max</label><input id="delayMax" oninput="setNumber('loop.max_delay', this.value)" />
+            <label>Jitter px</label><input id="jitter" oninput="setNumber('loop.jitter', this.value)" />
+            <label>Retry limit</label><input id="retryLimit" oninput="setNumber('loop.retry_limit', this.value)" />
+            <label>Verify delay</label><input id="verifyDelay" oninput="setNumber('loop.verify_delay', this.value)" />
+          </div>
+        </div>
+        <div class="card" style="margin-top:12px">
+          <h2>Replay</h2>
+          <div class="grid2">
+            <label><input id="loopReplayEnabled" type="checkbox" onchange="setConfig('recorder.loop_replay_enabled', this.checked)" /> Run replay inside loop</label>
+            <label><input id="loopTapTrigger" type="checkbox" onchange="setConfig('recorder.loop_tap_trigger', this.checked)" /> Tap trigger before replay</label>
+          </div>
+          <div class="grid2">
+            <div><label>Trigger mode</label><select id="loopTriggerMode" onchange="setConfig('recorder.loop_trigger_mode', this.value)"><option value="template">template</option><option value="step">step</option></select></div>
+            <div><label>Trigger step</label><input id="loopTriggerStep" oninput="setConfig('recorder.loop_trigger_step', this.value)" /></div>
+            <div><label>Trigger template</label><input id="loopTriggerTemplate" oninput="setConfig('recorder.loop_trigger_template', this.value)" /></div>
+            <div><label>Trigger confidence</label><input id="loopTriggerConfidence" oninput="setNumber('recorder.loop_trigger_confidence', this.value)" /></div>
+            <div><label>Replay file</label><input id="loopReplayFile" oninput="setConfig('recorder.loop_replay_file', this.value)" /></div>
+            <div><label>Replay delay</label><input id="loopReplayDelay" oninput="setNumber('recorder.loop_replay_delay', this.value)" /></div>
+          </div>
+        </div>
       </section>
     </div>
   </main>
   <script>
     const licenseInput = document.getElementById('licenseKey');
     licenseInput.value = localStorage.getItem('ckr_license_key') || '';
+    let summaryData = null;
+    let configData = null;
+    let selectedDeviceId = localStorage.getItem('ckr_selected_device') || '';
+    let activeGroup = 'sequence';
 
     function esc(value) {
       return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     }
-    function licenseKey() {
-      return licenseInput.value.trim();
-    }
-    function saveLicense() {
-      localStorage.setItem('ckr_license_key', licenseKey());
-      refresh();
+    function licenseKey() { return licenseInput.value.trim(); }
+    function logLine(message) {
+      log.innerHTML = `<div>${esc(new Date().toLocaleTimeString())} ${esc(message)}</div>` + log.innerHTML;
     }
     async function request(path, payload) {
       const res = await fetch(path, {
@@ -892,6 +1188,18 @@ USER_HTML = r"""
       });
       if (!res.ok) throw new Error(await res.text());
       return await res.json();
+    }
+    function selectPage(page) {
+      for (const name of ['monitor', 'flow', 'settings']) {
+        document.getElementById(`page${name[0].toUpperCase()}${name.slice(1)}`).classList.toggle('active', name === page);
+        document.getElementById(`nav${name[0].toUpperCase()}${name.slice(1)}`).classList.toggle('active', name === page);
+      }
+    }
+    async function saveLicense() {
+      localStorage.setItem('ckr_license_key', licenseKey());
+      configData = null;
+      await refresh();
+      await loadConfig(false);
     }
     async function downloadAgent() {
       if (!licenseKey()) return;
@@ -911,8 +1219,154 @@ USER_HTML = r"""
       link.remove();
       URL.revokeObjectURL(url);
     }
+    async function loadConfig(showLog) {
+      if (!licenseKey()) return;
+      const data = await request('/api/user/config', {});
+      configData = data.config;
+      renderConfig();
+      if (showLog) logLine('Config reloaded.');
+    }
+    async function saveConfig(showLog=true) {
+      if (!configData) await loadConfig(false);
+      const data = await request('/api/user/config/save', {config: configData});
+      configData = data.config;
+      renderConfig();
+      if (showLog) logLine('Config saved.');
+    }
+    function setPath(path, value) {
+      const parts = path.split('.');
+      let target = configData;
+      for (const part of parts.slice(0, -1)) target = target[part];
+      target[parts[parts.length - 1]] = value;
+    }
+    function setConfig(path, value) { if (configData) setPath(path, value); }
+    function setNumber(path, value) {
+      if (!configData) return;
+      const number = value === '' ? 0 : Number(value);
+      setPath(path, Number.isFinite(number) ? number : 0);
+    }
+    function valueText(value) {
+      if (Array.isArray(value)) return value.join(', ');
+      return value ?? '';
+    }
+    function parseMaybeNumber(value) {
+      if (value === '') return null;
+      const number = Number(value);
+      return Number.isFinite(number) ? number : null;
+    }
+    function parseDelay(value) {
+      const text = String(value || '').trim();
+      if (!text) return null;
+      const parts = text.split(',').map(part => Number(part.trim())).filter(Number.isFinite);
+      if (parts.length === 2) return parts;
+      if (parts.length === 1) return parts[0];
+      return null;
+    }
+    function selectGroup(group) {
+      activeGroup = group;
+      groupSequence.classList.toggle('active', group === 'sequence');
+      groupInterrupts.classList.toggle('active', group === 'interrupts');
+      renderSteps();
+    }
+    function stepList() { return configData ? configData[activeGroup] : []; }
+    function replayMarker(step) {
+      const recorder = configData?.recorder || {};
+      if (!recorder.loop_replay_enabled || activeGroup !== 'sequence') return '';
+      const mode = recorder.loop_trigger_mode;
+      const byStep = String(step.name || '').trim().toLowerCase() === String(recorder.loop_trigger_step || '').trim().toLowerCase();
+      const byTemplate = String(step.template || '').trim() === String(recorder.loop_trigger_template || '').trim();
+      if ((mode === 'step' && (byStep || byTemplate)) || (mode === 'template' && byTemplate)) return 'VIDEO';
+      return '';
+    }
+    function updateStep(index, field, value, kind) {
+      const step = stepList()[index];
+      if (!step) return;
+      if (kind === 'bool') step[field] = value;
+      else if (kind === 'number') {
+        const parsed = parseMaybeNumber(value);
+        if (parsed === null) delete step[field]; else step[field] = parsed;
+      } else if (kind === 'delay') {
+        const parsed = parseDelay(value);
+        if (parsed === null) delete step[field]; else step[field] = parsed;
+      } else {
+        if (value === '' && ['retry_template'].includes(field)) delete step[field]; else step[field] = value;
+      }
+      if (field === 'template' || field === 'name') renderSteps();
+    }
+    function addStep() {
+      stepList().push({enabled:true, name:'New Step', template:'templates/new_step.png', confidence:0.85});
+      renderSteps();
+    }
+    function deleteStep(index) {
+      stepList().splice(index, 1);
+      renderSteps();
+    }
+    function moveStep(index, delta) {
+      const list = stepList();
+      const next = index + delta;
+      if (next < 0 || next >= list.length) return;
+      [list[index], list[next]] = [list[next], list[index]];
+      renderSteps();
+    }
+    function renderSteps() {
+      if (!configData) return;
+      steps.innerHTML = stepList().map((step, index) => `
+        <tr>
+          <td><input type="checkbox" ${step.enabled !== false ? 'checked' : ''} onchange="updateStep(${index}, 'enabled', this.checked, 'bool')" /></td>
+          <td><input value="${esc(step.name || '')}" oninput="updateStep(${index}, 'name', this.value)" /></td>
+          <td><input value="${esc(step.confidence ?? '')}" oninput="updateStep(${index}, 'confidence', this.value, 'number')" /></td>
+          <td><input value="${esc(step.template || '')}" oninput="updateStep(${index}, 'template', this.value)" /></td>
+          <td class="warn">${esc(replayMarker(step))}</td>
+          <td><input value="${esc(valueText(step.post_delay))}" oninput="updateStep(${index}, 'post_delay', this.value, 'delay')" /></td>
+          <td><input value="${esc(valueText(step.wait_before))}" oninput="updateStep(${index}, 'wait_before', this.value, 'delay')" /></td>
+          <td><input value="${esc(step.timeout ?? '')}" oninput="updateStep(${index}, 'timeout', this.value, 'number')" /></td>
+          <td><input type="checkbox" ${step.verify_click ? 'checked' : ''} onchange="updateStep(${index}, 'verify_click', this.checked, 'bool')" /></td>
+          <td><input value="${esc(step.retry_after ?? '')}" oninput="updateStep(${index}, 'retry_after', this.value, 'number')" /></td>
+          <td><input value="${esc(step.retry_template || '')}" oninput="updateStep(${index}, 'retry_template', this.value)" /></td>
+          <td><input value="${esc(step.retry_confidence ?? '')}" oninput="updateStep(${index}, 'retry_confidence', this.value, 'number')" /></td>
+          <td class="row">
+            <button onclick="moveStep(${index}, -1)">Up</button>
+            <button onclick="moveStep(${index}, 1)">Down</button>
+            <button class="danger" onclick="deleteStep(${index})">Delete</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+    function setInput(id, value) {
+      const element = document.getElementById(id);
+      if (element) element.value = value ?? '';
+    }
+    function renderConfig() {
+      if (!configData) return;
+      setInput('adbPath', configData.device.adb_path);
+      setInput('adbSerial', configData.device.adb_serial);
+      setInput('scanInterval', configData.loop.scan_interval);
+      setInput('delayMin', configData.loop.min_delay);
+      setInput('delayMax', configData.loop.max_delay);
+      setInput('jitter', configData.loop.jitter);
+      setInput('retryLimit', configData.loop.retry_limit);
+      setInput('verifyDelay', configData.loop.verify_delay);
+      loopReplayEnabled.checked = !!configData.recorder.loop_replay_enabled;
+      loopTapTrigger.checked = !!configData.recorder.loop_tap_trigger;
+      loopTriggerMode.value = configData.recorder.loop_trigger_mode || 'template';
+      setInput('loopTriggerStep', configData.recorder.loop_trigger_step);
+      setInput('loopTriggerTemplate', configData.recorder.loop_trigger_template);
+      setInput('loopTriggerConfidence', configData.recorder.loop_trigger_confidence);
+      setInput('loopReplayFile', configData.recorder.loop_replay_file);
+      setInput('loopReplayDelay', configData.recorder.loop_replay_delay);
+      renderSteps();
+    }
+    function chooseDevice(deviceId) {
+      selectedDeviceId = deviceId;
+      localStorage.setItem('ckr_selected_device', deviceId);
+      renderSummary();
+    }
+    function currentDevice() {
+      const devices = summaryData?.devices || [];
+      return devices.find(d => d.device_id === selectedDeviceId) || devices.find(d => d.online) || devices[0];
+    }
     async function waitCommand(commandId) {
-      for (let attempt = 0; attempt < 60; attempt++) {
+      for (let attempt = 0; attempt < 90; attempt++) {
         const data = await request(`/api/user/commands/${encodeURIComponent(commandId)}`, {});
         const command = data.command;
         if (!['queued', 'sent'].includes(command.status)) return command;
@@ -920,8 +1374,12 @@ USER_HTML = r"""
       }
       throw new Error(`Command ${commandId} did not finish in time`);
     }
-    async function sendCommand(deviceId, command) {
-      const sent = await request(`/api/user/devices/${encodeURIComponent(deviceId)}/commands`, {command, payload:{}});
+    async function sendSelectedCommand(command) {
+      const device = currentDevice();
+      if (!device) { logLine('No agent connected.'); return; }
+      if (command === 'start_bot') await saveConfig(false);
+      const sent = await request(`/api/user/devices/${encodeURIComponent(device.device_id)}/commands`, {command, payload:{}});
+      logLine(`Sent ${command} to ${device.device_name || device.device_id}`);
       const result = await waitCommand(sent.command_id);
       if (command === 'screenshot' && result.response_json) {
         try {
@@ -934,35 +1392,45 @@ USER_HTML = r"""
       }
       await refresh();
     }
+    function renderSummary() {
+      const data = summaryData;
+      const lic = data?.license || {};
+      const device = currentDevice();
+      if (device && !selectedDeviceId) selectedDeviceId = device.device_id;
+      const cls = data?.license_ok ? 'ok' : 'bad';
+      downloadButton.disabled = !data?.license_ok;
+      licenseInfo.innerHTML = data ? `
+        <div>Status: <span class="${cls}">${esc(data.license_reason)}</span></div>
+        <div>Customer: ${esc(lic.customer_name || '-')}</div>
+        <div>Expires: ${esc(lic.expires_at || 'never')}</div>
+      ` : 'Enter your license key.';
+      selectedDevice.innerHTML = device ? `
+        <div class="mono">${esc(device.device_id)}</div>
+        <div>${esc(device.device_name || '-')} ${esc(device.agent_version || '')}</div>
+        <div class="${device.online ? 'ok' : 'bad'}">${device.online ? 'Online' : 'Offline'}</div>
+      ` : '<span class="warn">No agent connected.</span>';
+      metrics.innerHTML = `
+        <div class="metric"><div class="label">License</div><div class="value ${cls}">${esc(data?.license_reason || '-')}</div></div>
+        <div class="metric"><div class="label">Agent</div><div class="value ${device?.online ? 'ok' : 'bad'}">${device?.online ? 'Online' : 'Offline'}</div></div>
+        <div class="metric"><div class="label">Device</div><div class="value">${esc(device?.device_name || '-')}</div></div>
+        <div class="metric"><div class="label">Bot</div><div class="value">${esc(device?.last_status?.bot_running ? 'Running' : '-')}</div></div>
+      `;
+      devices.innerHTML = (data?.devices || []).map(d => `
+        <tr>
+          <td class="${d.online ? 'ok' : 'bad'}">${d.online ? 'Online' : 'Offline'}</td>
+          <td><div class="mono">${esc(d.device_id)}</div><div class="muted">${esc(d.device_name)} ${esc(d.agent_version)}</div></td>
+          <td>${esc(d.last_seen_at)}</td>
+          <td class="row"><button class="${d.device_id === selectedDeviceId ? 'active' : ''}" onclick="chooseDevice('${esc(d.device_id)}')">Select</button></td>
+        </tr>
+      `).join('') || '<tr><td colspan="4" class="warn">No agent connected yet. Download and open the agent.</td></tr>';
+      log.innerHTML = (data?.commands || []).map(c => `<div>[${esc(c.created_at)}] ${esc(c.command)} ${esc(c.status)} ${esc(c.response_json || '')}</div>`).join('');
+    }
     async function refresh() {
       if (!licenseKey()) return;
       try {
-        const data = await request('/api/user/summary', {});
-        const lic = data.license;
-        const cls = data.license_ok ? 'ok' : 'bad';
-        downloadButton.disabled = !data.license_ok;
-        licenseInfo.innerHTML = `
-          <div class="metric"><span class="label">Status</span><span class="${cls}">${esc(data.license_reason)}</span></div>
-          <div class="metric"><span class="label">Customer</span><span>${esc(lic.customer_name || '-')}</span></div>
-          <div class="metric"><span class="label">Expires</span><span>${esc(lic.expires_at || 'never')}</span></div>
-        `;
-        devices.innerHTML = data.devices.map(d => `
-          <tr>
-            <td class="${d.online ? 'ok' : 'bad'}">${d.online ? 'Online' : 'Offline'}</td>
-            <td>
-              <div class="mono">${esc(d.device_id)}</div>
-              <div class="muted">${esc(d.device_name)} ${esc(d.agent_version)}</div>
-              <div class="muted">Last seen: ${esc(d.last_seen_at)}</div>
-            </td>
-            <td class="row">
-              <button onclick="sendCommand('${esc(d.device_id)}','status')">Status</button>
-              <button onclick="sendCommand('${esc(d.device_id)}','test_ldplayer')">Test LDPlayer</button>
-              <button class="primary" onclick="sendCommand('${esc(d.device_id)}','start_bot')">Start</button>
-              <button class="danger" onclick="sendCommand('${esc(d.device_id)}','kill_bot')">Kill</button>
-              <button onclick="sendCommand('${esc(d.device_id)}','screenshot')">Screenshot</button>
-            </td>
-          </tr>`).join('') || '<tr><td colspan="3" class="warn">No agent connected yet.</td></tr>';
-        log.innerHTML = data.commands.map(c => `<div>[${esc(c.created_at)}] ${esc(c.command)} ${esc(c.status)} ${esc(c.response_json || '')}</div>`).join('');
+        summaryData = await request('/api/user/summary', {});
+        renderSummary();
+        if (!configData) await loadConfig(false);
       } catch (err) {
         downloadButton.disabled = true;
         licenseInfo.innerHTML = `<span class="bad">${esc(err.message)}</span>`;
