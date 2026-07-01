@@ -20,9 +20,18 @@ import websockets
 
 
 AGENT_VERSION = "0.1.0"
-ROOT_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.local.json")
-DEVICE_ID_PATH = Path(__file__).with_name("device_id.txt")
+
+
+def get_agent_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+AGENT_DIR = get_agent_dir()
+ROOT_DIR = AGENT_DIR if getattr(sys, "frozen", False) else AGENT_DIR.parent
+DEFAULT_CONFIG_PATH = AGENT_DIR / "config.local.json"
+DEVICE_ID_PATH = AGENT_DIR / "device_id.txt"
 
 sys.path.insert(0, str(ROOT_DIR))
 
@@ -55,6 +64,21 @@ def apply_adb_config(settings: dict[str, Any]) -> None:
     config = config_loader.config
     config.ADB_PATH = str(settings.get("adb_path") or config.ADB_PATH)
     config.ADB_SERIAL = str(settings.get("adb_serial") or config.ADB_SERIAL)
+
+
+def apply_adb_env(settings: dict[str, Any], env: dict[str, str]) -> None:
+    adb_path = str(settings.get("adb_path") or config_loader.config.ADB_PATH)
+    adb_serial = str(settings.get("adb_serial") or config_loader.config.ADB_SERIAL)
+    env["CKR_ADB_PATH"] = adb_path
+    env["CKR_ADB_SERIAL"] = adb_serial
+
+
+def run_bot_mode(settings: dict[str, Any]) -> None:
+    apply_adb_env(settings, os.environ)
+    config_loader.reload_config()
+    import auto_clicker  # noqa: PLC0415
+
+    auto_clicker.main()
 
 
 class Agent:
@@ -188,14 +212,25 @@ class Agent:
     async def command_start_bot(self, _payload: dict[str, Any]) -> dict[str, Any]:
         if self.bot_process and self.bot_process.poll() is None:
             return {"already_running": True, "pid": self.bot_process.pid}
-        python_exe = str(self.settings.get("python_exe") or sys.executable)
-        bot_script = ROOT_DIR / str(self.settings.get("bot_script") or "auto_clicker.py")
-        if not bot_script.exists():
-            raise RuntimeError(f"Bot script not found: {bot_script}")
+        env = os.environ.copy()
+        apply_adb_env(self.settings, env)
+        env["CKR_DISABLE_BOT_HOTKEYS"] = "1"
+        if getattr(sys, "frozen", False):
+            config_path = str(self.settings.get("_config_path") or DEFAULT_CONFIG_PATH)
+            command = [sys.executable, "--run-bot", "--config", config_path]
+            script_label = sys.executable
+        else:
+            python_exe = str(self.settings.get("python_exe") or sys.executable)
+            bot_script = ROOT_DIR / str(self.settings.get("bot_script") or "auto_clicker.py")
+            if not bot_script.exists():
+                raise RuntimeError(f"Bot script not found: {bot_script}")
+            command = [python_exe, str(bot_script)]
+            script_label = str(bot_script)
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         self.bot_process = subprocess.Popen(
-            [python_exe, str(bot_script)],
+            command,
             cwd=str(ROOT_DIR),
+            env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -204,7 +239,7 @@ class Agent:
         )
         asyncio.create_task(self.stream_bot_output(self.bot_process))
         await self.send_status("bot_started")
-        return {"started": True, "pid": self.bot_process.pid, "script": str(bot_script)}
+        return {"started": True, "pid": self.bot_process.pid, "script": script_label}
 
     async def command_kill_bot(self, _payload: dict[str, Any]) -> dict[str, Any]:
         if self.bot_process is None or self.bot_process.poll() is not None:
@@ -248,15 +283,20 @@ class Agent:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Cookie Run Windows Agent")
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="Path to agent config JSON")
+    parser.add_argument("--run-bot", action="store_true", help="Run bundled auto clicker bot")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     config_path = Path(args.config)
+    settings = load_json(config_path) if config_path.exists() else {}
+    settings["_config_path"] = str(config_path)
+    if args.run_bot:
+        run_bot_mode(settings)
+        return
     if not config_path.exists():
         raise SystemExit(f"Missing config: {config_path}. Copy agent/config.example.json to agent/config.local.json")
-    settings = load_json(config_path)
     for key in ("server_url", "license_key"):
         if not settings.get(key):
             raise SystemExit(f"Missing required config key: {key}")

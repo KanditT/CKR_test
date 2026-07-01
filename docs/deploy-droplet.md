@@ -36,8 +36,16 @@ Create `/opt/ckr-control/server/.env`:
 ```text
 ADMIN_TOKEN=<long-random-admin-token>
 PUBLIC_BASE_URL=https://auto-ckr.beersval.com
+AGENT_SERVER_URL=wss://auto-ckr.beersval.com/ws/agent
 CKR_DATA_DIR=/app/data
 CKR_DB_PATH=/app/data/ckr_control.sqlite3
+CKR_DOWNLOAD_DIR=/app/downloads
+```
+
+Copy the built portable agent zip to:
+
+```text
+/opt/ckr-control/server/downloads/CookieRunAgent-portable.zip
 ```
 
 Start:
@@ -71,23 +79,17 @@ caddy reload --config /etc/caddy/Caddyfile
 
 ## Production Check
 
-1. Open `https://auto-ckr.beersval.com/admin`.
+1. Open admin: `https://auto-ckr.beersval.com/admin`.
 2. Enter admin token.
 3. Generate a license.
-4. Configure Windows Agent:
-
-```json
-{
-  "server_url": "wss://auto-ckr.beersval.com/ws/agent",
-  "license_key": "CKR-....",
-  "adb_path": "C:\\LDPlayer\\LDPlayer14\\adb.exe",
-  "adb_serial": "127.0.0.1:5555"
-}
-```
-
-5. Run agent.
-6. Confirm device is Online.
-7. Send `Status`.
-8. Send `Test LDPlayer`.
-9. Send `Start`.
-10. Send `Kill`.
+4. Open user portal: `https://auto-ckr.beersval.com/user`.
+5. Enter the generated license key.
+6. Click `Download Agent`.
+7. Extract the zip on Windows.
+8. Double-click `CookieRunAgent.exe`.
+9. Confirm the user portal can only see devices for that license.
+10. Confirm device is Online in both admin and user portal.
+11. Send `Status`.
+12. Send `Test LDPlayer`.
+13. Send `Start`.
+14. Send `Kill`.

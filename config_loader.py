@@ -33,8 +33,19 @@ def load_config():
 def reload_config():
     global config
     config = load_config()
+    apply_env_overrides(config)
     return config
 
 
 os.chdir(APP_DIR)
 config = load_config()
+def apply_env_overrides(module):
+    adb_path = os.getenv("CKR_ADB_PATH")
+    adb_serial = os.getenv("CKR_ADB_SERIAL")
+    if adb_path:
+        module.ADB_PATH = adb_path
+    if adb_serial:
+        module.ADB_SERIAL = adb_serial
+
+
+apply_env_overrides(config)

@@ -4,6 +4,8 @@ import json
 import os
 import secrets
 import sqlite3
+import io
+import zipfile
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -11,13 +13,15 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 
 DATA_DIR = Path(os.getenv("CKR_DATA_DIR", "server/data"))
 DB_PATH = Path(os.getenv("CKR_DB_PATH", str(DATA_DIR / "ckr_control.sqlite3")))
+DOWNLOAD_DIR = Path(os.getenv("CKR_DOWNLOAD_DIR", "server/downloads"))
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "dev-admin-token")
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
+AGENT_SERVER_URL = os.getenv("AGENT_SERVER_URL", "")
 APP_NAME = "Cookie Run Remote Control"
 
 app = FastAPI(title=APP_NAME)
@@ -35,6 +39,16 @@ def parse_datetime(value: str | None) -> datetime | None:
     if not value:
         return None
     return datetime.fromisoformat(value)
+
+
+def default_agent_server_url() -> str:
+    if AGENT_SERVER_URL:
+        return AGENT_SERVER_URL
+    if PUBLIC_BASE_URL.startswith("https://"):
+        return "wss://" + PUBLIC_BASE_URL.removeprefix("https://").rstrip("/") + "/ws/agent"
+    if PUBLIC_BASE_URL.startswith("http://"):
+        return "ws://" + PUBLIC_BASE_URL.removeprefix("http://").rstrip("/") + "/ws/agent"
+    return PUBLIC_BASE_URL.rstrip("/") + "/ws/agent"
 
 
 @contextmanager
@@ -200,14 +214,100 @@ def summary_payload() -> dict[str, Any]:
     return {"licenses": licenses, "devices": devices, "commands": commands, "server_time": utc_iso()}
 
 
+def user_summary_payload(license_key: str) -> dict[str, Any]:
+    license_key = license_key.strip()
+    with db_conn() as conn:
+        license_row = get_license(conn, license_key)
+        if license_row is None:
+            raise HTTPException(status_code=404, detail="license not found")
+        ok, reason = license_is_valid(license_row)
+        devices = [
+            dict(row)
+            for row in conn.execute(
+                "select * from devices where license_key = ? order by last_seen_at desc",
+                (license_key,),
+            ).fetchall()
+        ]
+        commands = [
+            dict(row)
+            for row in conn.execute(
+                """
+                select command_logs.*
+                  from command_logs
+                  join devices on devices.device_id = command_logs.device_id
+                 where devices.license_key = ?
+                 order by command_logs.id desc
+                 limit 60
+                """,
+                (license_key,),
+            ).fetchall()
+        ]
+    for device in devices:
+        device["online"] = device["device_id"] in agents
+        if device["online"]:
+            device["last_status"] = agents[device["device_id"]].last_status
+    license_data = dict(license_row)
+    return {
+        "license": license_data,
+        "license_ok": ok,
+        "license_reason": reason,
+        "devices": devices,
+        "commands": commands,
+        "server_time": utc_iso(),
+    }
+
+
+async def dispatch_device_command(device_id: str, command: str, payload: dict[str, Any]) -> dict[str, Any]:
+    command = command.strip()
+    if not command:
+        raise HTTPException(status_code=400, detail="command is required")
+    session = agents.get(device_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="agent is offline")
+    with db_conn() as conn:
+        cursor = conn.execute(
+            """
+            insert into command_logs (device_id, command, payload_json, status, created_at)
+            values (?, ?, ?, 'sent', ?)
+            """,
+            (device_id, command, json.dumps(payload), utc_iso()),
+        )
+        command_id = int(cursor.lastrowid)
+    await session.websocket.send_json(
+        {"type": "command", "id": command_id, "command": command, "payload": payload}
+    )
+    return {"status": "sent", "command_id": command_id}
+
+
+def verify_license_device(license_key: str, device_id: str) -> None:
+    with db_conn() as conn:
+        license_row = get_license(conn, license_key)
+        if license_row is None:
+            raise HTTPException(status_code=404, detail="license not found")
+        ok, reason = license_is_valid(license_row)
+        if not ok:
+            raise HTTPException(status_code=403, detail=reason)
+        device = conn.execute(
+            "select * from devices where device_id = ? and license_key = ?",
+            (device_id, license_key),
+        ).fetchone()
+        if device is None:
+            raise HTTPException(status_code=404, detail="device not found for this license")
+
+
 @app.get("/", include_in_schema=False)
 def root() -> RedirectResponse:
-    return RedirectResponse("/admin")
+    return RedirectResponse("/user")
 
 
 @app.get("/admin", response_class=HTMLResponse, include_in_schema=False)
 def admin_page() -> str:
     return ADMIN_HTML.replace("__PUBLIC_BASE_URL__", PUBLIC_BASE_URL)
+
+
+@app.get("/user", response_class=HTMLResponse, include_in_schema=False)
+def user_page() -> str:
+    return USER_HTML.replace("__PUBLIC_BASE_URL__", PUBLIC_BASE_URL)
 
 
 @app.get("/api/admin/summary")
@@ -267,30 +367,32 @@ def reset_license_device(license_key: str, x_admin_token: str | None = Header(de
     return {"status": "device_reset"}
 
 
+@app.delete("/api/admin/licenses/{license_key}")
+def delete_license(license_key: str, x_admin_token: str | None = Header(default=None)) -> dict[str, str]:
+    require_admin(x_admin_token)
+    if any(session.license_key == license_key for session in agents.values()):
+        raise HTTPException(status_code=409, detail="Disconnect the active agent before deleting this license")
+    with db_conn() as conn:
+        devices = [
+            row["device_id"]
+            for row in conn.execute("select device_id from devices where license_key = ?", (license_key,)).fetchall()
+        ]
+        for device_id in devices:
+            conn.execute("delete from command_logs where device_id = ?", (device_id,))
+        conn.execute("delete from devices where license_key = ?", (license_key,))
+        result = conn.execute("delete from licenses where license_key = ?", (license_key,))
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="license not found")
+    return {"status": "deleted"}
+
+
 @app.post("/api/admin/devices/{device_id}/commands")
 async def send_command(device_id: str, request: Request, x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
     require_admin(x_admin_token)
     body = await request.json()
     command = str(body.get("command", "")).strip()
     payload = body.get("payload") or {}
-    if not command:
-        raise HTTPException(status_code=400, detail="command is required")
-    session = agents.get(device_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="agent is offline")
-    with db_conn() as conn:
-        cursor = conn.execute(
-            """
-            insert into command_logs (device_id, command, payload_json, status, created_at)
-            values (?, ?, ?, 'sent', ?)
-            """,
-            (device_id, command, json.dumps(payload), utc_iso()),
-        )
-        command_id = int(cursor.lastrowid)
-    await session.websocket.send_json(
-        {"type": "command", "id": command_id, "command": command, "payload": payload}
-    )
-    return {"status": "sent", "command_id": command_id}
+    return await dispatch_device_command(device_id, command, payload)
 
 
 @app.get("/api/admin/commands/{command_id}")
@@ -301,6 +403,93 @@ def get_command(command_id: int, x_admin_token: str | None = Header(default=None
     if command is None:
         raise HTTPException(status_code=404, detail="command not found")
     return {"command": dict(command)}
+
+
+@app.post("/api/user/summary")
+async def user_summary(request: Request) -> dict[str, Any]:
+    body = await request.json()
+    license_key = str(body.get("license_key", "")).strip()
+    if not license_key:
+        raise HTTPException(status_code=400, detail="license_key is required")
+    return user_summary_payload(license_key)
+
+
+@app.post("/api/user/devices/{device_id}/commands")
+async def user_send_command(device_id: str, request: Request) -> dict[str, Any]:
+    body = await request.json()
+    license_key = str(body.get("license_key", "")).strip()
+    command = str(body.get("command", "")).strip()
+    payload = body.get("payload") or {}
+    if not license_key:
+        raise HTTPException(status_code=400, detail="license_key is required")
+    if command not in {"status", "test_ldplayer", "start_bot", "kill_bot", "screenshot"}:
+        raise HTTPException(status_code=400, detail="command is not allowed")
+    verify_license_device(license_key, device_id)
+    return await dispatch_device_command(device_id, command, payload)
+
+
+@app.post("/api/user/commands/{command_id}")
+async def user_get_command(command_id: int, request: Request) -> dict[str, Any]:
+    body = await request.json()
+    license_key = str(body.get("license_key", "")).strip()
+    if not license_key:
+        raise HTTPException(status_code=400, detail="license_key is required")
+    with db_conn() as conn:
+        command = conn.execute(
+            """
+            select command_logs.*
+              from command_logs
+              join devices on devices.device_id = command_logs.device_id
+             where command_logs.id = ? and devices.license_key = ?
+            """,
+            (command_id, license_key),
+        ).fetchone()
+    if command is None:
+        raise HTTPException(status_code=404, detail="command not found")
+    return {"command": dict(command)}
+
+
+@app.post("/api/user/download-agent")
+async def user_download_agent(request: Request) -> Response:
+    body = await request.json()
+    license_key = str(body.get("license_key", "")).strip()
+    if not license_key:
+        raise HTTPException(status_code=400, detail="license_key is required")
+    with db_conn() as conn:
+        license_row = get_license(conn, license_key)
+        if license_row is None:
+            raise HTTPException(status_code=404, detail="license not found")
+        ok, reason = license_is_valid(license_row)
+        if not ok:
+            raise HTTPException(status_code=403, detail=reason)
+
+    base_zip = DOWNLOAD_DIR / "CookieRunAgent-portable.zip"
+    if not base_zip.exists():
+        raise HTTPException(status_code=404, detail="agent download is not available yet")
+
+    agent_config = {
+        "server_url": default_agent_server_url(),
+        "license_key": license_key,
+        "device_name": str(license_row["customer_name"] or "CKR Agent"),
+        "adb_path": "C:\\LDPlayer\\LDPlayer14\\adb.exe",
+        "adb_serial": "127.0.0.1:5555",
+        "python_exe": "",
+        "bot_script": "auto_clicker.py",
+    }
+    output = io.BytesIO()
+    with zipfile.ZipFile(base_zip, "r") as source_zip, zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as target_zip:
+        for item in source_zip.infolist():
+            normalized = item.filename.replace("\\", "/").lstrip("/")
+            if normalized.endswith("config.local.json"):
+                continue
+            target_zip.writestr(item, source_zip.read(item.filename))
+        target_zip.writestr("config.local.json", json.dumps(agent_config, indent=2))
+    output.seek(0)
+    return Response(
+        output.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="CookieRunAgent-portable.zip"'},
+    )
 
 
 @app.websocket("/ws/agent")
@@ -426,17 +615,19 @@ ADMIN_HTML = r"""
     body { margin:0; background:var(--bg); color:var(--text); font-family:Segoe UI, Arial, sans-serif; }
     header { display:flex; justify-content:space-between; align-items:center; padding:18px 24px; border-bottom:1px solid var(--line); background:#020617; }
     h1 { margin:0; font-size:20px; }
-    main { padding:18px 24px; display:grid; gap:16px; grid-template-columns: 360px 1fr; }
+    main { padding:18px 24px; display:grid; gap:16px; grid-template-columns: 320px 1fr; }
     section { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; }
     h2 { margin:0 0 12px; font-size:15px; }
     label { display:block; margin:10px 0 4px; color:var(--muted); font-size:12px; }
     input, textarea, select { width:100%; background:#020617; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:9px; }
-    button { background:var(--card); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:8px 11px; cursor:pointer; }
+    button { background:var(--card); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:8px 11px; cursor:pointer; white-space:nowrap; }
     button.primary { background:var(--accent); color:#052e16; border-color:var(--accent); font-weight:700; }
     button.danger { background:var(--danger); color:white; border-color:var(--danger); }
-    table { width:100%; border-collapse:collapse; font-size:13px; }
-    th, td { text-align:left; padding:8px; border-bottom:1px solid var(--line); vertical-align:top; }
-    th { color:var(--muted); font-size:12px; }
+    table { width:100%; border-collapse:separate; border-spacing:0 8px; font-size:13px; }
+    th { text-align:left; color:var(--muted); font-size:12px; padding:0 8px 2px; }
+    td { background:#101827; text-align:left; padding:10px 8px; vertical-align:top; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
+    td:first-child { border-left:1px solid var(--line); border-radius:8px 0 0 8px; }
+    td:last-child { border-right:1px solid var(--line); border-radius:0 8px 8px 0; }
     .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
     .pill { display:inline-block; padding:2px 8px; border-radius:999px; background:var(--card); color:var(--muted); }
     .online { color:var(--accent); font-weight:700; }
@@ -464,9 +655,6 @@ ADMIN_HTML = r"""
       <section>
         <h2>Generate License</h2>
         <label>Customer</label><input id="customerName" placeholder="Customer name" />
-        <label>LINE Name</label><input id="lineName" placeholder="LINE display name" />
-        <label>Days</label><input id="days" placeholder="30 (blank = no expiry)" />
-        <label>Max Devices</label><input id="maxDevices" value="1" />
         <label>Note</label><textarea id="note" rows="3"></textarea>
         <p><button class="primary" onclick="generateLicense()">Generate</button></p>
         <div id="generated" class="mono"></div>
@@ -516,9 +704,9 @@ ADMIN_HTML = r"""
     async function generateLicense() {
       const payload = {
         customer_name: customerName.value,
-        line_name: lineName.value,
-        days: days.value,
-        max_devices: maxDevices.value,
+        line_name: '',
+        days: '',
+        max_devices: 1,
         note: note.value,
       };
       const data = await request('/api/admin/licenses', {method:'POST', body:JSON.stringify(payload)});
@@ -551,6 +739,11 @@ ADMIN_HTML = r"""
       await request(`/api/admin/licenses/${encodeURIComponent(key)}/reset-device`, {method:'POST', body:'{}'});
       await refresh();
     }
+    async function deleteLicense(key) {
+      if (!confirm(`Delete license ${key}? This removes its device and logs too.`)) return;
+      await request(`/api/admin/licenses/${encodeURIComponent(key)}`, {method:'DELETE'});
+      await refresh();
+    }
     async function refresh() {
       try {
         const data = await request('/api/admin/summary');
@@ -576,11 +769,203 @@ ADMIN_HTML = r"""
             <td class="row">
               <button class="danger" onclick="revoke('${esc(l.license_key)}')">Revoke</button>
               <button onclick="resetDevice('${esc(l.license_key)}')">Reset Device</button>
+              <button class="danger" onclick="deleteLicense('${esc(l.license_key)}')">Delete</button>
             </td>
           </tr>`).join('');
         log.innerHTML = data.commands.map(c => `<div>[${esc(c.created_at)}] ${esc(c.device_id)} ${esc(c.command)} ${esc(c.status)} ${esc(c.response_json || '')}</div>`).join('');
       } catch (err) {
         log.innerHTML = `<div style="color:#ef4444">${esc(err.message)}</div>` + log.innerHTML;
+      }
+    }
+    setInterval(refresh, 3000);
+    refresh();
+  </script>
+</body>
+</html>
+"""
+
+
+USER_HTML = r"""
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cookie Run Agent Portal</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg:#0f172a; --panel:#111827; --card:#1f2937; --line:#334155;
+      --text:#f8fafc; --muted:#94a3b8; --accent:#22c55e; --danger:#ef4444; --warn:#f59e0b;
+    }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font-family:Segoe UI, Arial, sans-serif; }
+    header { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:18px 24px; background:#020617; border-bottom:1px solid var(--line); }
+    h1 { margin:0; font-size:20px; }
+    main { padding:18px 24px; display:grid; grid-template-columns:340px 1fr; gap:16px; }
+    section { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; }
+    h2 { margin:0 0 12px; font-size:15px; }
+    label { display:block; margin:10px 0 4px; color:var(--muted); font-size:12px; }
+    input { width:100%; background:#020617; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:10px; }
+    button { background:var(--card); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:8px 11px; cursor:pointer; white-space:nowrap; }
+    button.primary { background:var(--accent); color:#052e16; border-color:var(--accent); font-weight:700; }
+    button.danger { background:var(--danger); color:#fff; border-color:var(--danger); }
+    .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .metric { display:grid; grid-template-columns:110px 1fr; gap:6px; font-size:13px; margin:6px 0; }
+    .label { color:var(--muted); }
+    .mono { font-family:Consolas, monospace; }
+    .muted { color:var(--muted); }
+    .ok { color:var(--accent); font-weight:700; }
+    .bad { color:var(--danger); font-weight:700; }
+    .warn { color:var(--warn); font-weight:700; }
+    table { width:100%; border-collapse:separate; border-spacing:0 8px; font-size:13px; }
+    th { text-align:left; color:var(--muted); font-size:12px; padding:0 8px 2px; }
+    td { background:#101827; text-align:left; padding:10px 8px; vertical-align:top; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
+    td:first-child { border-left:1px solid var(--line); border-radius:8px 0 0 8px; }
+    td:last-child { border-right:1px solid var(--line); border-radius:0 8px 8px 0; }
+    #log { height:280px; overflow:auto; background:#020617; border:1px solid var(--line); padding:10px; border-radius:6px; font-family:Consolas, monospace; font-size:12px; }
+    #screenshot { max-width:100%; border:1px solid var(--line); border-radius:8px; display:none; margin-top:10px; }
+    @media (max-width: 900px) { header { align-items:flex-start; flex-direction:column; } main { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Cookie Run Agent Portal</h1>
+      <div class="muted">__PUBLIC_BASE_URL__</div>
+    </div>
+    <a class="muted" href="/admin">Admin</a>
+  </header>
+  <main>
+    <div>
+      <section>
+        <h2>License</h2>
+        <label>License Key</label>
+        <input id="licenseKey" placeholder="CKR-XXXX-XXXX-XXXX-XXXX" />
+        <p class="row">
+          <button class="primary" onclick="saveLicense()">Connect</button>
+          <button onclick="refresh()">Refresh</button>
+          <button id="downloadButton" onclick="downloadAgent()" disabled>Download Agent</button>
+        </p>
+        <div id="licenseInfo" class="muted">Enter your license key.</div>
+      </section>
+      <section style="margin-top:16px">
+        <h2>Latest Screenshot</h2>
+        <div class="muted">Use Screenshot after the agent is online.</div>
+        <img id="screenshot" alt="LDPlayer screenshot" />
+      </section>
+    </div>
+
+    <div>
+      <section>
+        <h2>Device</h2>
+        <table>
+          <thead><tr><th>Status</th><th>Device</th><th>Actions</th></tr></thead>
+          <tbody id="devices"></tbody>
+        </table>
+      </section>
+      <section style="margin-top:16px">
+        <h2>Log</h2>
+        <div id="log"></div>
+      </section>
+    </div>
+  </main>
+  <script>
+    const licenseInput = document.getElementById('licenseKey');
+    licenseInput.value = localStorage.getItem('ckr_license_key') || '';
+
+    function esc(value) {
+      return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+    function licenseKey() {
+      return licenseInput.value.trim();
+    }
+    function saveLicense() {
+      localStorage.setItem('ckr_license_key', licenseKey());
+      refresh();
+    }
+    async function request(path, payload) {
+      const res = await fetch(path, {
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        body:JSON.stringify({license_key: licenseKey(), ...(payload || {})})
+      });
+      if (!res.ok) throw new Error(await res.text());
+      return await res.json();
+    }
+    async function downloadAgent() {
+      if (!licenseKey()) return;
+      const res = await fetch('/api/user/download-agent', {
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        body:JSON.stringify({license_key: licenseKey()})
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'CookieRunAgent-portable.zip';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }
+    async function waitCommand(commandId) {
+      for (let attempt = 0; attempt < 60; attempt++) {
+        const data = await request(`/api/user/commands/${encodeURIComponent(commandId)}`, {});
+        const command = data.command;
+        if (!['queued', 'sent'].includes(command.status)) return command;
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      throw new Error(`Command ${commandId} did not finish in time`);
+    }
+    async function sendCommand(deviceId, command) {
+      const sent = await request(`/api/user/devices/${encodeURIComponent(deviceId)}/commands`, {command, payload:{}});
+      const result = await waitCommand(sent.command_id);
+      if (command === 'screenshot' && result.response_json) {
+        try {
+          const response = JSON.parse(result.response_json);
+          if (response.png_base64) {
+            screenshot.src = `data:image/png;base64,${response.png_base64}`;
+            screenshot.style.display = 'block';
+          }
+        } catch (_) {}
+      }
+      await refresh();
+    }
+    async function refresh() {
+      if (!licenseKey()) return;
+      try {
+        const data = await request('/api/user/summary', {});
+        const lic = data.license;
+        const cls = data.license_ok ? 'ok' : 'bad';
+        downloadButton.disabled = !data.license_ok;
+        licenseInfo.innerHTML = `
+          <div class="metric"><span class="label">Status</span><span class="${cls}">${esc(data.license_reason)}</span></div>
+          <div class="metric"><span class="label">Customer</span><span>${esc(lic.customer_name || '-')}</span></div>
+          <div class="metric"><span class="label">Expires</span><span>${esc(lic.expires_at || 'never')}</span></div>
+        `;
+        devices.innerHTML = data.devices.map(d => `
+          <tr>
+            <td class="${d.online ? 'ok' : 'bad'}">${d.online ? 'Online' : 'Offline'}</td>
+            <td>
+              <div class="mono">${esc(d.device_id)}</div>
+              <div class="muted">${esc(d.device_name)} ${esc(d.agent_version)}</div>
+              <div class="muted">Last seen: ${esc(d.last_seen_at)}</div>
+            </td>
+            <td class="row">
+              <button onclick="sendCommand('${esc(d.device_id)}','status')">Status</button>
+              <button onclick="sendCommand('${esc(d.device_id)}','test_ldplayer')">Test LDPlayer</button>
+              <button class="primary" onclick="sendCommand('${esc(d.device_id)}','start_bot')">Start</button>
+              <button class="danger" onclick="sendCommand('${esc(d.device_id)}','kill_bot')">Kill</button>
+              <button onclick="sendCommand('${esc(d.device_id)}','screenshot')">Screenshot</button>
+            </td>
+          </tr>`).join('') || '<tr><td colspan="3" class="warn">No agent connected yet.</td></tr>';
+        log.innerHTML = data.commands.map(c => `<div>[${esc(c.created_at)}] ${esc(c.command)} ${esc(c.status)} ${esc(c.response_json || '')}</div>`).join('');
+      } catch (err) {
+        downloadButton.disabled = true;
+        licenseInfo.innerHTML = `<span class="bad">${esc(err.message)}</span>`;
       }
     }
     setInterval(refresh, 3000);

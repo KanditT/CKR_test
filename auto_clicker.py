@@ -1,4 +1,5 @@
 import sys
+import os
 import time
 import random
 import cv2
@@ -66,8 +67,10 @@ def human_delay(delay_range=None):
 
 
 def main():
-    keyboard.add_hotkey(config.PAUSE_HOTKEY, toggle_pause)
-    keyboard.add_hotkey(config.QUIT_HOTKEY, quit_bot)
+    hotkeys_enabled = os.getenv("CKR_DISABLE_BOT_HOTKEYS") != "1"
+    if hotkeys_enabled:
+        keyboard.add_hotkey(config.PAUSE_HOTKEY, toggle_pause)
+        keyboard.add_hotkey(config.QUIT_HOTKEY, quit_bot)
 
     print(f"Connecting to {config.ADB_SERIAL} via adb...")
     if not adb_client.is_connected():
@@ -84,7 +87,10 @@ def main():
     print(f"Preloaded {len(_template_cache)} template(s).")
     print(f"Sequence: {' -> '.join(s['name'] for s in config.SEQUENCE)} -> (loops)")
     print(f"Interrupts watched at every step: {', '.join(i['name'] for i in config.INTERRUPTS)}")
-    print(f"Controls: [{config.PAUSE_HOTKEY}] pause/resume   [{config.QUIT_HOTKEY}] quit")
+    if hotkeys_enabled:
+        print(f"Controls: [{config.PAUSE_HOTKEY}] pause/resume   [{config.QUIT_HOTKEY}] quit")
+    else:
+        print("Controls: remote kill from web portal")
     print("Starting in 3 seconds...")
     time.sleep(3)
 

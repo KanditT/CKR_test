@@ -11,6 +11,7 @@ services:
       - "127.0.0.1:8088:8000"
     volumes:
       - ckr-data:/app/data
+      - ./downloads:/app/downloads:ro
     restart: unless-stopped
 
 volumes:

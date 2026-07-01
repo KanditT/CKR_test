@@ -21,7 +21,8 @@ $env:CKR_DB_PATH="server/data/ckr_control.sqlite3"
 Open:
 
 ```text
-http://localhost:8000/admin
+Admin: http://localhost:8000/admin
+User:  http://localhost:8000/user
 ```
 
 Use `dev-admin-token` in the Admin token field.
@@ -59,6 +60,26 @@ Run:
 ```powershell
 .\.venv\Scripts\python.exe agent\agent.py --config agent\config.local.json
 ```
+
+## Build Agent EXE
+
+Build a portable folder and zip:
+
+```powershell
+.\build_agent_portable.cmd
+```
+
+Output:
+
+```text
+dist\CookieRunAgent\CookieRunAgent.exe
+dist\CookieRunAgent\config.local.json
+dist\CookieRunAgent-portable.zip
+```
+
+For local manual testing, edit `config.local.json`, then double-click `CookieRunAgent.exe`.
+For the web download flow, copy `dist\CookieRunAgent-portable.zip` to `server\downloads\CookieRunAgent-portable.zip`.
+When a user enters a valid license at `/user`, the server injects that license into `config.local.json` inside the downloaded zip.
 
 ## Smoke Test
 

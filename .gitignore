@@ -5,7 +5,10 @@ recordings/*.json
 build/
 dist/
 *.spec
+!CookieRunAgent.spec
 server/.env
 server/data/
+server/downloads/*.zip
 agent/config.local.json
 agent/device_id.txt
+token

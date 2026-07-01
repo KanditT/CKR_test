@@ -11,6 +11,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 from pathlib import Path
 
 import websockets
@@ -32,6 +33,17 @@ def request_json(path: str, method: str = "GET", payload: dict | None = None) ->
     req = urllib.request.Request(f"{BASE_URL}{path}", data=data, headers=headers, method=method)
     with urllib.request.urlopen(req, timeout=5) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def request_bytes(path: str, method: str = "GET", payload: dict | None = None) -> bytes:
+    data = None
+    headers = {"x-admin-token": ADMIN_TOKEN}
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["content-type"] = "application/json"
+    req = urllib.request.Request(f"{BASE_URL}{path}", data=data, headers=headers, method=method)
+    with urllib.request.urlopen(req, timeout=5) as response:
+        return response.read()
 
 
 def wait_for_server() -> None:
@@ -84,18 +96,79 @@ async def exercise_agent_flow(license_key: str) -> None:
         while time.time() < deadline:
             result = request_json(f"/api/admin/commands/{command_id}")
             if result["command"]["status"] == "done":
+                break
+            await asyncio.sleep(0.2)
+        else:
+            raise RuntimeError("admin command did not complete")
+
+        user_summary = request_json("/api/user/summary", "POST", {"license_key": license_key})
+        assert user_summary["license"]["license_key"] == license_key, user_summary
+        assert user_summary["devices"][0]["device_id"] == "SMOKE-DEVICE", user_summary
+
+        user_command = request_json(
+            "/api/user/devices/SMOKE-DEVICE/commands",
+            "POST",
+            {"license_key": license_key, "command": "status", "payload": {}},
+        )
+        user_command_id = user_command["command_id"]
+        command_message = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
+        assert command_message["type"] == "command", command_message
+        assert command_message["id"] == user_command_id, command_message
+        await ws.send(
+            json.dumps(
+                {
+                    "type": "command_result",
+                    "id": user_command_id,
+                    "status": "done",
+                    "response": {"ok": True, "from": "user-smoke"},
+                }
+            )
+        )
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            result = request_json(
+                f"/api/user/commands/{user_command_id}",
+                "POST",
+                {"license_key": license_key},
+            )
+            if result["command"]["status"] == "done":
                 return
             await asyncio.sleep(0.2)
-        raise RuntimeError("command did not complete")
+        raise RuntimeError("user command did not complete")
+
+
+def exercise_user_download(license_key: str) -> None:
+    html = request_bytes("/user")
+    assert b"Cookie Run Agent Portal" in html, "user page did not render"
+    zip_bytes = request_bytes("/api/user/download-agent", "POST", {"license_key": license_key})
+    with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as file:
+        file.write(zip_bytes)
+        zip_path = Path(file.name)
+    try:
+        with zipfile.ZipFile(zip_path, "r") as agent_zip:
+            names = agent_zip.namelist()
+            assert "config.local.json" in names, names
+            config = json.loads(agent_zip.read("config.local.json").decode("utf-8"))
+            assert config["license_key"] == license_key, config
+            assert config["server_url"] == WS_URL, config
+    finally:
+        zip_path.unlink(missing_ok=True)
 
 
 def main() -> None:
     tmp_dir = Path(tempfile.mkdtemp(prefix="ckr-smoke-"))
+    download_dir = tmp_dir / "downloads"
+    download_dir.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(download_dir / "CookieRunAgent-portable.zip", "w", zipfile.ZIP_DEFLATED) as agent_zip:
+        agent_zip.writestr("CookieRunAgent.exe", "smoke")
+        agent_zip.writestr("config.local.json", "{}")
     env = os.environ.copy()
     env["ADMIN_TOKEN"] = ADMIN_TOKEN
     env["PUBLIC_BASE_URL"] = BASE_URL
+    env["AGENT_SERVER_URL"] = WS_URL
     env["CKR_DATA_DIR"] = str(tmp_dir)
     env["CKR_DB_PATH"] = str(tmp_dir / "ckr_control.sqlite3")
+    env["CKR_DOWNLOAD_DIR"] = str(download_dir)
 
     process = subprocess.Popen(
         [
@@ -122,7 +195,9 @@ def main() -> None:
             {"customer_name": "Smoke", "line_name": "smoke", "days": "1", "max_devices": "1"},
         )
         license_key = created["license_key"]
+        exercise_user_download(license_key)
         asyncio.run(exercise_agent_flow(license_key))
+        request_json(f"/api/admin/licenses/{license_key}", "DELETE")
         print("smoke ok")
     finally:
         process.terminate()
