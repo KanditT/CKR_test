@@ -27,14 +27,8 @@ SEQUENCE = [{'name': 'Click Play!', 'template': 'templates/start.png', 'confiden
  {'name': 'Click Multi-Buy', 'template': 'templates/time2_2.png', 'confidence': 0.85},
  {'name': 'Click Play!', 'template': 'templates/time2_3.png', 'confidence': 0.85},
  {'name': 'start2', 'template': 'templates/start2.png', 'confidence': 0.85, 'enabled': False},
- {'name': 'Click Use Booster',
-  'template': 'templates/run1.png',
-  'confidence': 0.85,
-  'post_delay': (0.0, 0.15)},
- {'name': 'Click Use Booster',
-  'template': 'templates/replay_game_start.png',
-  'confidence': 0.78,
-  'enabled': False},
+ {'name': 'Click Use Booster', 'template': 'templates/run1.png', 'confidence': 0.85},
+ {'name': 'Click Use Booster', 'template': 'templates/replay_game_start.png', 'confidence': 0.78},
  {'name': 'exit',
   'template': 'templates/exit.png',
   'confidence': 0.85,
@@ -80,7 +74,7 @@ CLICK_VERIFY_DELAY = 0.6
 RECORDER_INPUT_MODE = 'adb'
 RECORDER_JUMP_TAP = (165, 625)
 RECORDER_SLIDE_SWIPE = (1115, 625, 1115, 625, 140)
-RECORDER_LOOP_REPLAY_ENABLED = False
+RECORDER_LOOP_REPLAY_ENABLED = True
 RECORDER_LOOP_TRIGGER_MODE = 'template'
 RECORDER_LOOP_TRIGGER_STEP = 'Click Use Booster'
 RECORDER_LOOP_TRIGGER_TEMPLATE = 'templates/replay_game_start.png'
