@@ -107,6 +107,7 @@ def run_loop():
     paused = False
 
     seq_index = 0
+    last_clicked_index = 0
     step_wait_start = time.time()
     wait_target = None
 
@@ -169,6 +170,7 @@ def run_loop():
                         break
                     print(f"  '{step['name']}' still showing after tap (attempt {attempt + 1}), retapping")
                     click_match(still_there, step["name"])
+            last_clicked_index = seq_index
             seq_index = (seq_index + 1) % len(config.SEQUENCE)
             step_wait_start = time.time()
             wait_target = None
@@ -183,7 +185,7 @@ def run_loop():
             next_step = config.SEQUENCE[seq_index]["name"]
             print(f"  -> waiting for next step: {next_step}")
         elif step.get("retry_after") and (time.time() - step_wait_start) >= step["retry_after"]:
-            prev_step = config.SEQUENCE[(seq_index - 1) % len(config.SEQUENCE)]
+            prev_step = config.SEQUENCE[last_clicked_index]
             retry_template = step.get("retry_template", prev_step["template"])
             retry_match = find_template(frame, retry_template, step.get("retry_confidence", 0.85))
             if retry_match:
